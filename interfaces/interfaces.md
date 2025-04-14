@@ -10,6 +10,15 @@ By convention when outputs are listed for a job it is assumed that these outputs
 
 **Implementation status:  partially implemented. Depth FIM production will be added in PI-6**
 
+### Example docker run command
+
+From inside the inundate-dev container would run:
+
+```
+python inundate.py --region_tag 1234 --catchment_data_path /path/to/catchment/json/ --forecast_path /path/to/forecast/ --output_path /path/to/output/ --fim_type extent --geo_mem_cache 512
+```
+
+
 ### Description  
 - Generates flood extent/depth maps from a HAND REM. This job inundates a *single* hand catchment. It can be configured to return either a depth FIM or an extent FIM.
 
@@ -58,6 +67,14 @@ By convention when outputs are listed for a job it is assumed that these outputs
 
 **Implementation status:  partially implemented. Vector mosaicking and mosaicking for depth rasters will be added in PI-6**
 
+### Example command
+
+From inside the mosaic-dev container would run:
+
+```
+python mosaic.py --region_tag 1234 --raster_paths /paths/to/rasters/ --output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent --resolution 3 --geo_mem_cache 512
+```
+
 ### Description  
 This job mosaics flood extents and benchmark raster data from either HAND or benchmark sources using a pixel-wise NAN-MAX selection policy. That is, for all the images being mosaicked if there are overlapping raster pixels then the maximum value of the overlapping rasters at that pixel location is selected. No-Data values are not considered when selecting the maximum (they are treated as Nan) unless all the pixels are No-Data. Rasters can be either depth or extent rasters and the mosaicking policy for overlapping rasters will remain the same. Common input combinations and the behavior of the jobs in those cases are described below.
 
@@ -92,6 +109,14 @@ In the case of point or multipoint geometries they can contain either extents or
 ## Agreement Maker (`agreement_maker`) 
 
 **Implementation status:  Will be implemented in NGWPC PI-6**
+
+### Example command
+
+From inside the agreement-dev container would run:
+
+```
+python agreement.py --region_tag 1234 --benchmark_path /path/to/raster/or/multipoint --candidate_path /path/to/raster/or/multipoint --agreement_path /path/to/agreement/ --clip_geometry /path/to/clipvectors --fim_type extent --resolution 3 --geo_mem_cache 512
+```
 
 ### Description  
 Creates an agreement map showing where a pair of input data (raster or vector) spatially concur. The job is designed to work with any combination of raster or vector input pairs. The job also works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous  agreement map when the inputs are depths or a categorical agreement map for extents. The output is raster or vector data in EPSG:5070.
@@ -137,6 +162,14 @@ Output is either a single raster or a geopackage of vector information.
 ## Metrics Calculator (`metrics_calculator`) 
 
 **Implementation status:  Will be implemented in NGWPC PI-6**
+
+### Example command
+
+From inside the metrics-dev container would run:
+
+```
+python metrics.py --region_tag 1234 --agreement_path /path/to/agreement/ --metrics_path /path/to/metrics/json --geo_mem_cache 512
+```
 
 ### Description  
 This job is designed to take an agreement map and calculate summary metrics of the agreement of two FIMs over a given ROI.
