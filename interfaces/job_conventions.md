@@ -6,12 +6,12 @@ All data inputs and outputs from containers should be written to and read from f
 ### names and abbreviations
 
 * If an argument is a path then full argument name should have “path” at the end.
-* If two or more jobs accept the same argument then the argument name and abbreviation should be the same accross all the jobs. 
+* If two or more jobs accept the same argument then the argument name and abbreviation should be the same across all the jobs. 
 * If an argument has the same name across jobs then it should also have the same abbreviation.
 
 ### Region tags
 
-One of the arguments for all jobs must be “–region_tag”. This is so that the logs for a specific region and job can more easily be aggregated. During testing it is fine to just asign a tag of "test" or similar to the run.
+One of the arguments for all jobs must be “–region_tag”. This is so that the logs for a specific region and job can more easily be aggregated. During testing it is fine to just assign a tag of "test" or similar to the run.
 
 ## Logging
 
@@ -48,7 +48,7 @@ Below are guidelines for what to include at each log level:
 
 ### Results
 
-When a job runs sucessfully then the last message should look like this:
+When a job runs successfully then the last message should look like this:
 
 ```
 {

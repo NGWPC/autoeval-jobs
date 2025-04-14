@@ -6,7 +6,9 @@
 
 This repository contains code and tests for a set of containerized flood inundation map (FIM) evaluation jobs that are meant to be composed together to form a FIM evaluation workflow. Each job can be developed and run independently of other jobs or used in conjunction with a job orchestrator to run evaluations at scale. The intended target for the orchestrator is HashiCorp Nomad and the jobs have been designed to make them easy to run as parameterized jobs on a Nomad cluster.  
 
-A more thorough description of the inputs and outputs of each job as well as the intended behavior of a job can be found in the jobs' [interfaces](/interfaces/interfaces.md) descriptions. A job interface is a formal specification of a job's inputs, outputs, and arguments specified using [json-schema](https://json-schema.org/). At the moment the interface yaml files serve as a guide for developers when (re)implementing jobs and for understanding the possible ways that jobs can interact through their inputs and outputs. In the future they could also be used to validate the data produced by each job.
+A more thorough description of the inputs and outputs of each job as well as the intended behavior of a job can be found in the jobs' [interfaces](/interfaces/interfaces.md) descriptions. A job interface is a formal specification of a job's inputs, outputs, and arguments specified using [json-schema](https://json-schema.org/). At the moment the interface yaml files serve as a guide for developers when (re)implementing jobs and for understanding the possible ways that jobs can interact through their inputs and outputs. In the future they could also be used to validate the data accepted and produced by each job.
+
+We also provide another document in the interfaces directory listing [job conventions](/interfaces/job_conventions.md) to use when implementing jobs. These are conventions developers are expected to follow when implementing jobs and include implementation guidelines on how inputs and outputs should be handled by the job, rules for job entrypoint argument names, and job logging.
 
 # Setup
 

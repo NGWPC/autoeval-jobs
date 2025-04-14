@@ -15,7 +15,7 @@ By convention when outputs are listed for a job it is assumed that these outputs
 From inside the inundate-dev container would run:
 
 ```
-python inundate.py --region_tag 1234 --catchment_data_path /path/to/catchment/json/ --forecast_path /path/to/forecast/ --output_path /path/to/output/ --fim_type extent --geo_mem_cache 512
+python inundate.py --region_tag 1234 --catchment_data_path /path/to/catchment/json/ --forecast_path /path/to/forecast/ --fim_output_path /path/to/output/ --fim_type extent --geo_mem_cache 512
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
@@ -73,7 +73,7 @@ This example lists all possible arguments. See yaml files for optional vs requir
 From inside the mosaic-dev container would run:
 
 ```
-python mosaic.py --region_tag 1234 --raster_paths /paths/to/rasters/ --output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent --resolution 3 --geo_mem_cache 512
+python mosaic.py --region_tag 1234 --raster_paths /paths/to/rasters/ --hwm_paths /path/to/multipoint/geometries --mosaic_output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent --resolution 3 --geo_mem_cache 512
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
