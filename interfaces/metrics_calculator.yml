@@ -1,46 +1,70 @@
 id: metrics_calculator
-description: Computes validation metrics from an agreement map (raster or vector polygons in EPSG:5070)
+description: Computes validation metrics from an agreement map (raster or vector polygons in EPSG:5070) and saves them to a JSON file.
 outputTransmission:
   - value
   - reference
-inputs:
-  agreementMap:
-    title: Agreement Dataset
-    description: Raster or vector polygons showing agreement areas in CONUS Albers (EPSG:5070)
+
+arguments:
+  
+  region_tag:
+    title: Region Tag
+    description: An identifier tag for the processing region or job.
     schema:
-      oneOf:
+      type: string
+  
+  geo_mem_cache:
+    title: Geocomputing Memory Cache
+    description: GDAL cache size in megabytes (used if agreement map is raster).
+    required: false 
+    schema:
+      type: integer
+      minimum: 64
+      maximum: 4096 
+      default: 512 
+
+inputs:
+  agreement_path:
+    title: Agreement Dataset Path
+    description: Path/URI to the input agreement map (Raster GeoTIFF or Vector GeoPackage with polygons) in CONUS Albers (EPSG:5070).
+    required: true 
+    schema:
+      oneOf: 
         - type: string
           format: uri
           contentMediaType: image/tiff; application=geotiff
           properties:
-            crs: 
+            crs:
               const: EPSG:5070
         - type: string
           format: uri
           contentMediaType: application/geopackage+gpkg
           properties:
-            geometry_type: polygon
+            geometry_type:
+                type: string
+                enum: [Point, MultiPoint] 
             crs:
               const: EPSG:5070
+
 outputs:
-  metrics:
-    title: Validation Metrics 
-    description: Object containing performance metrics for agreement between observations and models
+  metrics_path:
+    title: Metrics Output Path
+    description: |
+      Path/URI where the calculated validation metrics will be saved as a JSON file.
+      The JSON file will contain an object with performance metrics, typically including:
+      ```json
+      {
+        "csi": <number between 0 and 1>,
+        "pod": <number between 0 and 1>,
+        "far": <number between 0 and 1>
+        // Other metrics might be included depending on calculation specifics
+      }
+      ```
+      Where:
+      - `csi`: Critical Success Index
+      - `pod`: Probability of Detection (Hit Rate)
+      - `far`: False Alarm Ratio
     schema:
-      type: object
-      properties:
-        csi:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Critical Success Index
-        pod:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Probability of Detection
-        far:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: False Alarm Ratio
+      # The output itself is the path to the file
+      type: string
+      format: uri
+      contentMediaType: application/json 

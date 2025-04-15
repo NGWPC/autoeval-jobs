@@ -46,7 +46,7 @@ inputs:
         type: string
         format: uri
         contentMediaType: image/tiff; application=geotiff
-      minItems: 1 # If provided, the list should not be empty
+      minItems: 1 
 
   hwm_paths:
     title: Input Multipoint Vector Paths
@@ -55,7 +55,6 @@ inputs:
     schema:
       type: array
       items:
-        # Allow different vector formats containing points/multipoints
         oneOf:
           - type: string
             format: uri
@@ -63,9 +62,9 @@ inputs:
           - type: string
             format: uri
             contentMediaType: application/geopackage+gpkg
-      minItems: 1 # If provided, the list should not be empty
+      minItems: 1 
 
-  clip_geometry:
+  clip_geometry_path:
     title: Clipping Geometry Path
     description: Path/URI to a vector file (e.g., GeoJSON, GPKG) containing polygon(s) for clipping the output mosaic.
     required: false 
@@ -80,18 +79,36 @@ outputs:
     schema:
       oneOf: 
         - type: string
-          format: uri # Output is specified as a path/URI
+          format: uri 
           contentMediaType: image/tiff; application=geotiff
           properties: 
             crs:
               const: EPSG:5070
               description: Standard US analysis projection with equal area preservation
             units: meters
-            properties: 
-              fimType:
-                type: string
-                enum: [depth, extent]
-                description: Type of FIM output - depth (float32) or extent (uint8)
+            dtype: uint8        
+            nodata: 255         
+            compression: lzw    
+          when: 
+            properties:
+              fim_type:
+                const: extent
+
+        - type: string
+          format: uri 
+          contentMediaType: image/tiff; application=geotiff
+          properties: 
+            crs:
+              const: EPSG:5070
+              description: Standard US analysis projection with equal area preservation
+            units: meters
+            dtype: float32      
+            nodata: -9999       
+            compression: lzw    
+          when: 
+            properties:
+              fim_type:
+                const: depth
         - type: string
           format: uri 
           contentMediaType: application/geopackage+gpkg

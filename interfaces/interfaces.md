@@ -24,14 +24,16 @@ This example lists all possible arguments. See yaml files for optional vs requir
 - Generates flood extent/depth maps from a HAND REM. This job inundates a *single* hand catchment. It can be configured to return either a depth FIM or an extent FIM.
 
 ### Arguments  
+- **region_tag**
+  - Used by the job logs to help pipeline track status of evaluation for different regions.
 - **geo_mem_cache**
   - The GDAL cache size in megabytes to use when processing gridded data. Raster processing is the most memory intensive portion of this job so this argument effectively limits the memory used by the job.
-- **output_type**
+- **fim_type**
   - Extent (binary) vs Depth (float values)  
 
 ### Inputs 
-- **catchment**:
-  - This input is a JSON file that contains a rating curve every HydroID in a HAND catchment along with metadata necessary to process the HydroID. It has the following structure:
+- **catchment_data_path**:
+  - This input is path to a JSON file that contains a rating curve every HydroID in a HAND catchment along with metadata necessary to process the HydroID. The json file should have the following structure:
   ```json
   {
       "<catchment_id>": {
@@ -56,12 +58,13 @@ This example lists all possible arguments. See yaml files for optional vs requir
     - This is a path to a HAND relative elevation tiff for this catchment. This would typically be an s3 path but could be a local filepath as well. 
     - **catchment_raster_path**
     - This is a path to a tiff that helps map every location in the catchment to a rating curve associated with that location. Every pixel is assigned an integer value that reflects the HydroID of the sub-catchment it is in. This value can then be used to look up an associated rating curve in the hydrotable_entries object inside the catchment json. This rating curve is used to interpolate a stage value for a given NWM reach discharge. If the stage value is larger than the HAND value at that pixel then the pixel is marked flooded.
-- **flow_scenario**
-  - A csv file listing NWM feature_id values and their respective discharges. A stage is obtained for these discharges for each HydroID catchment by using the rating associated with that HydroID.
+- **forecast_path**
+  - A path to a csv file listing NWM feature_id values and their respective discharges. A stage is obtained for these discharges for each HydroID catchment by using the rating associated with that HydroID.
 
 ### Outputs 
-- **Inundation Raster**
-  - This is a depth or extent raster generated from the HAND data. The format of this raster is specified in `hand_inundator.yml'
+- **fim_output_path**
+  - This is a depth or extent raster generated from the HAND data depending on the value of the fim_type argument. The format of this raster is specified in `hand_inundator.yml'
+
 ---
 
 ## Mosaic Maker (`fim_mosaicker`) 
@@ -88,7 +91,9 @@ In the case of a polygon or multipolygon geometries they will be treated as only
 In the case of point or multipoint geometries they can contain either extents or depths in their attributes and will pass through the type of information they are tagged with unless they are being mosaicked with polygon geometries. When a raster is being mosaicked with point geometries, locations where the raster coincide with the point values will be converted to a point geometry by averaging extent or depth pixel values within a buffer of the point location. This value will then be mosaicked with the value described by the overlapping point geometries depth or extent attribute. The raster values that don't coincide with points in the point geometry will be discarded. Additional attributes from the original point geometries will be passed through and returned with the mosaicked geometries.
 
 ### Arguments
-- **target_resolution**
+- **region_tag**
+  - Used by the job logs to help pipeline track status of evaluation for different regions.
+- **resolution**
   - Resolution of the final mosaicked FIM when a raster will be produced. Required for raster outputs  
 - **fim_type**
   - This informs the job whether it is mosaicking FIMs with extents or depths.
@@ -96,16 +101,17 @@ In the case of point or multipoint geometries they can contain either extents or
   - The GDAL cache size in megabytes to use when processing gridded data. Raster processing is the most memory intensive portion of this job so this argument effectively limits the memory used by the job.
 
 ### Inputs
-- **Files**: 
+- **raster_paths** and/or **hwm_paths**: 
   - Array of paths to TIFF/GeoJSON/GeoPackage rasters and/or vector files. If a vector is listed in the array then the output will be a vector. 
-- **Clipping Geometry**
-  - Optional GeoJSON boundary to clip the mosaicked output to. This input will always be given in the HAND FIM evaluation pipeline and will describe the ROI being evaluated.
+- **clip_geometry_path**
+  - Optional path to a GeoJSON or gpkg file with a boundary to clip the mosaicked output to. This input will always be given in the HAND FIM evaluation pipeline and will describe the ROI being evaluated.
 
 ### Outputs 
-- **Raster**
-  - In the case of raster output, the output will be a single mosaicked raster.
-- **Vector** 
-  - In the case of vector output, the output will be a single mosaicked vector tiff file.
+- **mosaic_output_path**
+  - **Raster**
+    - In the case of raster output, the output will be a path pointing to a single mosaicked raster.
+  - **Vector** 
+    - In the case of vector output, the output will be a path pointing to a single mosaicked vector gpkg.
 
 ---
 
@@ -118,26 +124,39 @@ In the case of point or multipoint geometries they can contain either extents or
 From inside the agreement-dev container would run:
 
 ```
-python agreement.py --region_tag 1234 --benchmark_path /path/to/raster/or/multipoint --candidate_path /path/to/raster/or/multipoint --agreement_path /path/to/agreement/ --clip_geometry /path/to/clipvectors --fim_type extent --resolution 3 --geo_mem_cache 512
+python agreement.py --region_tag 1234 --benchmark_path /path/to/raster/or/multipoint --candidate_path /path/to/raster/or/multipoint --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent --resolution 3 --geo_mem_cache 512
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
 
-### Description  
-Creates an agreement map showing where a pair of input data (raster or vector) spatially concur. The job is designed to work with any combination of raster or vector input pairs. The job also works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous  agreement map when the inputs are depths or a categorical agreement map for extents. The output is raster or vector data in EPSG:5070.
+**Note on implementation memory usage and the geo_mem_cache argument:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation.
 
-Similarly to the mosaicking job geometry inputs and outputs, polygon geometries can only describe extents.
+### Description  
+Creates an agreement map showing where a pair of input data (raster or multipoint vector geometries) spatially concur. The job is designed to work with any combination of raster or multipoint input pairs. The job also works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The output is raster or vector data in EPSG:5070. In the case of raster output the resolution of the produced raster will be determined by the lowest resolution raster in the input data.
+
 
 ### Arguments  
+- **region_tag**
+  - Used by the job logs to help pipeline track status of evaluation for different regions.
+
 - **Resolution**
   - Mandatory x/y pixel resolution that is used when outputting rasters  
 
-### Inputs
-- **Dataset1/Dataset2**:  
-  - Raster or Vector (as geopackage). If a vector must be either a point, multipoint, multipolygon, or polygon geometry.  
+- **fim_type**
+  - Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.
 
-- **Mask dictionary**
-  - This is an optional json object that is composed of sub-objects that include paths to geopackage of masks to exclude or include in the final produced agreement. The input format is identical to the previous format that was previously used to mask areas over which to evaluate FIM model skill. Each mask geometry can also be buffered by setting a buffer flag to an integer value (with units of meters) in the sub-dictionaries "buffer" key.
+- **geo_mem_cache**
+  - The size of the cache gdal uses for raster processing. Since the most memory intensive part of most of the jobs is raster handling this is a way to help limit the memory usage of jobs.
+  
+### Inputs
+- **benchmark_path**:  
+  - path to raster or vector (as geopackage) benchmark data. If a vector must be either a point, multipoint, multipolygon, or polygon geometry.  
+
+- **candidate_path**:  
+  - path to raster or vector (as geopackage) benchmark data. If a vector must be either a point, multipoint, multipolygon, or polygon geometry.  
+
+- **clip_geoms**
+  - This is an optional path to json file that that includes paths to geopackage of masks to exclude or include in the final produced agreement. The input format is identical to the previous format that was previously used to mask areas over which to evaluate FIM model skill. Each mask geometry can also be buffered by setting a buffer flag to an integer value (with units of meters) in the sub-dictionaries "buffer" key.
 
   ```json
   {
@@ -156,17 +175,18 @@ Similarly to the mosaicking job geometry inputs and outputs, polygon geometries 
   
 ### Outputs 
 Output is either a single raster or a geopackage of vector information.
-
-- **Raster**
-  - See `agreement_maker.yml` for a description of the output raster format.
-- **Vector**: 
-  - See `agreement_maker.yml` for a description of output vector format. The returned geopackage could have additional attributes that are passed through from the input vector data to the output data. 
+- **agreement_path**
+  - **Raster**
+    - See `agreement_maker.yml` for a description of the output raster format.
+  - **Vector**: 
+    - See `agreement_maker.yml` for a description of output vector format. The returned geopackage could have additional attributes that are passed through from the input vector data to the output data. 
 
 ---
 
 ## Metrics Calculator (`metrics_calculator`) 
 
 **Implementation status:  Will be implemented in NGWPC PI-6**
+
 
 ### Example command
 
@@ -178,15 +198,24 @@ python metrics.py --region_tag 1234 --agreement_path /path/to/agreement/ --metri
 
 This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
 
+**Note on implementation memory usage and the geo_mem_cache argument:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation.
+
 ### Description  
 This job is designed to take an agreement map and calculate summary metrics of the agreement of two FIMs over a given ROI.
 
+### Arguments  
+- **region_tag**
+  - Used by the job logs to help pipeline track status of evaluation for different regions.
+  
+- **geo_mem_cache**
+  - The size of the cache gdal uses for raster processing. Since the most memory intensive part of most of the jobs is raster handling this is a way to help limit the memory usage of jobs.
+
 ### Input  
-- **Agreement map**
-  - Accepts raster TIFF or geopackage containing point or polygon geometries. The type of agreement map will be surmised by the number and type of data values in the raster or the geometry's attributes. 
+- **agreement_path**
+  - Accepts raster TIFF or geopackage files containing point or polygon geometries. The type of agreement map written to agreement_path will be surmised by the number and type of data values in the raster or the geometry's attributes. 
 
 ### Output  
-- **Metrics json**
+- **metrics_path**
   - The output will be a json file containing the metrics the user requested. `metrics_calculator.yml` lists a small subset of possible metrics.
 ---
 

@@ -1,112 +1,107 @@
 id: agreement_maker
-description: Creates an agreement map showing where input datasets (raster/vector) spatially concur. Works with depth or extent data. Produces either a depth agreement map or an extent agreement map, as raster or vector data in EPSG:5070.
+description: Creates an agreement map showing where input datasets (raster/vector) spatially concur. Calculates agreement based on the specified fim_type (extent or depth) and produces an output map (Raster or Vector) in EPSG:5070, optionally clipped.
+
+outputTransmission:
+  - reference 
 
 arguments:
-  targetResolution:
-    title: Resolution
-    description: desired resolution of output in cases whene output will be returned as raster (meters)
+  region_tag:
+    title: Region Tag
+    description: An identifier tag for the processing region or job.
     schema:
-      type: object
-      properties:
-        x:
-          type: number
-          minimum: 0
-          exclusiveMinimum: true
-        y:
-          type: number
-          minimum: 0
-          exclusiveMinimum: true
-      required: [x, y]
+      type: string
+
+  resolution:
+    title: Target Resolution
+    description: Desired resolution in CRS units (e.g., meters) for the output agreement map, primarily applicable if the output is a raster.
+    required: false # Not stritcly required if only computing agreement over HWM points
+    schema:
+      type: number
+      minimum: 0
+      exclusiveMinimum: true # Resolution must be positive
+
+  fim_type:
+    title: FIM Type for Agreement
+    description: Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.
+    schema:
+      type: string
+      enum: [extent, depth]
+      default: extent 
+
+  geo_mem_cache:
+    title: Geocomputing Memory Cache
+    description: GDAL cache size in megabytes for optimized raster processing.
+    schema:
+      type: integer
+      minimum: 64
+      maximum: 4096
+      default: 512 
 
 inputs:
-  dataset1:
-    title: First Dataset
-    description: Depth or extent dataset, raster or vector, in EPSG:5070
+  benchmark_path:
+    title: Benchmark Dataset Path
+    description: Path/URI to the benchmark dataset (e.g., Raster GeoTIFF or Vector GeoPackage/GeoJSON) representing the ground truth or reference flood map (extent or depth).
+    required: true
     schema:
-      oneOf:
-        - type: string
-          format: uri
-          contentMediaType: image/tiff; application=geotiff
-          properties:
-            crs:
-              const: EPSG:5070
-            fim_type:
-              type: string
-              enum: [depth, extent]
-        - type: string
-          format: uri
-          contentMediaType: application/geopackage+sqlite3  # For vector data formats
-          properties:
-            crs:
-              const: EPSG:5070
-            geometry_type:
-              type: string
-              enum: [Point, MultiPoint, Polygon, Multipolygon]
-            fim_type:
-              type: string
-              enum: [depth, extent]
+      type: string
+      format: uri
 
-  dataset2:
-    title: Second Dataset
-    description: Depth or extent dataset, raster or vector, in EPSG:5070
+  candidate_path:
+    title: Candidate Dataset Path
+    description: Path/URI to the candidate dataset (e.g., Raster GeoTIFF or Vector GeoPackage/GeoJSON) to compare against the benchmark (extent or depth).
+    required: true
     schema:
-      $ref: '#/inputs/dataset1/schema'
+      type: string
+      format: uri
 
-  masks:
-    title: Mask Areas
-    description: JSON object defining geometric masks to include/exclude. Keys are mask names, values define path (URI to GPKG), buffer (meters or null), and operation (include/exclude).
+  clip_geoms:
+    title: Clipping Geometry dictionary
+    description: This is an optional path to json file that that includes paths to geopackage of masks to exclude or include in the final produced agreement.
+    required: false # Assuming clipping is optional
     schema:
-      type: object
-      additionalProperties:
-        type: object
-        properties:
-          path:
-            type: string
-            format: uri
-            contentMediaType: application/geopackage+sqlite3
-          buffer:
-            oneOf:
-              - type: number
-                minimum: 0
-              - type: "null"
-          operation:
-            type: string
-            enum: [include, exclude]
-        required: [path, buffer, operation]
-      required: []
+      type: string
+      format: uri
 
 outputs:
-  agreementMap:
-    title: Agreement Map
-    description: Depth or extent agreement map. Will be raster or vector data in EPSG:5070.
+  agreement_path:
+    title: Agreement Map Path
+    description: Path for the output agreement map (Raster GeoTIFF or Vector GeoPackage) in EPSG:5070. The format (raster/vector) and raster properties depend on input types and the 'fim_type' argument.
     schema:
       oneOf:
         - type: string
           format: uri
           contentMediaType: image/tiff; application=geotiff
-          when:
+          properties:
+            crs:
+              const: EPSG:5070
+            compression: lzw 
+            dtype: uint8   
+            nodata: 255      
+          when: 
             properties:
-              outputFormat:
-                const: raster
+              fim_type:
+                const: extent
+
+        
+        - type: string
+          format: uri
+          contentMediaType: image/tiff; application=geotiff
           properties:
             crs:
               const: EPSG:5070
             compression: lzw
-            dtype:
-              type: string
-              enum:
-                - float32  # For depth agreement maps
-                - uint8   # For extent agreement maps
-            nodata:
-              oneOf:
-                - const: -9999  # For depth agreement maps
-                - const: 255    # For extent agreement maps
+            dtype: float32   
+            nodata: -9999    
+          when: 
+            properties:
+              fim_type:
+                const: depth
         - type: string
           format: uri
-          contentMediaType: application/geopackage+sqlite3
+          contentMediaType: application/geopackage+gpkg
           properties:
             crs:
               const: EPSG:5070
             geometry_type:
               type: string
-              enum: [Point, MultiPoint, Polygon, Multipolygon]
+              enum: [Point, MultiPoint]
