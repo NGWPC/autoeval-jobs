@@ -76,25 +76,23 @@ This example lists all possible arguments. See yaml files for optional vs requir
 From inside the mosaic-dev container would run:
 
 ```
-python mosaic.py --region_tag 1234 --raster_paths /paths/to/rasters/ --hwm_paths /path/to/multipoint/geometries --mosaic_output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent --resolution 3 --geo_mem_cache 512
+python mosaic.py --region_tag 1234 --raster_paths /paths/to/rasters/ --hwm_paths /path/to/multipoint/geometries --mosaic_output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent --geo_mem_cache 512
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
 
 ### Description  
-This job mosaics flood extents and benchmark raster data from either HAND or benchmark sources using a pixel-wise NAN-MAX selection policy. That is, for all the images being mosaicked if there are overlapping raster pixels then the maximum value of the overlapping rasters at that pixel location is selected. No-Data values are not considered when selecting the maximum (they are treated as Nan) unless all the pixels are No-Data. Rasters can be either depth or extent rasters and the mosaicking policy for overlapping rasters will remain the same. Common input combinations and the behavior of the jobs in those cases are described below.
+This job mosaics flood extents and benchmark raster data from either HAND or benchmark sources using a pixel-wise NAN-MAX selection policy. That is, for all the images being mosaicked if there are overlapping raster pixels then the maximum value of the overlapping rasters at that pixel location is selected. No-Data values are not considered when selecting the maximum (they are treated as Nan) unless all the pixels are No-Data. Rasters can be either depth or extent rasters and the mosaicking policy for overlapping rasters will remain the same. Common input combinations and the behavior of the jobs in those cases are described below. 
 
-If vector data is being mosaicked then the behavior will depend on what type of geometry is described by the vector data. The allowed geometries are polygon, multipolygon, point, or multipoint.  
+In the case of raster output the resolution of the produced raster will be determined by the lowest resolution raster in the input data.
 
-In the case of a polygon or multipolygon geometries they will be treated as only describing an extent. Any point geometries mosaicked with them will be cast to extents. Rasters mosaicked with these geometries will be cast to polygonal extents as well and the final output will a mosaicked polygon, multipolygon, or polygon with adjacent points.
+If vector data is being mosaicked then the behavior will depend on what type of geometry is described by the vector data. The allowed geometries are point, or multipoint.  
 
 In the case of point or multipoint geometries they can contain either extents or depths in their attributes and will pass through the type of information they are tagged with unless they are being mosaicked with polygon geometries. When a raster is being mosaicked with point geometries, locations where the raster coincide with the point values will be converted to a point geometry by averaging extent or depth pixel values within a buffer of the point location. This value will then be mosaicked with the value described by the overlapping point geometries depth or extent attribute. The raster values that don't coincide with points in the point geometry will be discarded. Additional attributes from the original point geometries will be passed through and returned with the mosaicked geometries.
 
 ### Arguments
 - **region_tag**
   - Used by the job logs to help pipeline track status of evaluation for different regions.
-- **resolution**
-  - Resolution of the final mosaicked FIM when a raster will be produced. Required for raster outputs  
 - **fim_type**
   - This informs the job whether it is mosaicking FIMs with extents or depths.
 - **geo_mem_cache**
@@ -124,7 +122,7 @@ In the case of point or multipoint geometries they can contain either extents or
 From inside the agreement-dev container would run:
 
 ```
-python agreement.py --region_tag 1234 --benchmark_path /path/to/raster/or/multipoint --candidate_path /path/to/raster/or/multipoint --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent --resolution 3 --geo_mem_cache 512
+python agreement.py --region_tag 1234 --benchmark_path /path/to/raster/or/multipoint --candidate_path /path/to/raster/or/multipoint --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent --geo_mem_cache 512
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
@@ -132,15 +130,14 @@ This example lists all possible arguments. See yaml files for optional vs requir
 **Note on implementation memory usage and the geo_mem_cache argument:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation.
 
 ### Description  
-Creates an agreement map showing where a pair of input data (raster or multipoint vector geometries) spatially concur. The job is designed to work with any combination of raster or multipoint input pairs. The job also works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The output is raster or vector data in EPSG:5070. In the case of raster output the resolution of the produced raster will be determined by the lowest resolution raster in the input data.
+Creates an agreement map showing where a pair of input data (raster or multipoint vector geometries) spatially concur. The job is designed to work with any combination of raster or multipoint input pairs. The job also works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The output is raster or vector data in EPSG:5070. 
+
+In the case of raster output the resolution of the produced raster will be determined by the lowest resolution raster in the input data.
 
 
 ### Arguments  
 - **region_tag**
   - Used by the job logs to help pipeline track status of evaluation for different regions.
-
-- **Resolution**
-  - Mandatory x/y pixel resolution that is used when outputting rasters  
 
 - **fim_type**
   - Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.

@@ -11,15 +11,6 @@ arguments:
     schema:
       type: string
 
-  resolution:
-    title: Target Resolution
-    description: Desired resolution in CRS units (e.g., meters) for the output agreement map, primarily applicable if the output is a raster.
-    required: false # Not stritcly required if only computing agreement over HWM points
-    schema:
-      type: number
-      minimum: 0
-      exclusiveMinimum: true # Resolution must be positive
-
   fim_type:
     title: FIM Type for Agreement
     description: Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.

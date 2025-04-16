@@ -4,13 +4,6 @@ outputTransmission:
   - reference # Indicates output metadata/path is transmitted, not the full data 
 
 arguments:
-  resolution:
-    title: Target Resolution
-    description: Output resolution in CRS units (applied to both X and Y dimensions). Required if output is raster.
-    schema:
-      type: number
-      minimum: 0
-      exclusiveMinimum: true # Resolution must be positive
 
   fim_type:
     title: FIM Type
