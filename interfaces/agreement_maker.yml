@@ -31,15 +31,12 @@ inputs:
       contentMediaType: image/tiff; application=geotiff
   clip_geoms:
     title: Clipping Geometry dictionary
-    description: Optional path/URI to a JSON or GPKG file containing paths to geopackage vector masks used to exclude or include areas in the final agreement raster.
+    description: Optional path/URI to a file containing paths to geopackage or geojson vector masks used to exclude or include areas in the final agreement raster.
     required: false
     schema:
       type: string
       format: uri
-      contentMediaType: 
-        anyOf:
-          - application/geopackage+gpkg
-          - application/geo+json
+      contentMediaType: application/json
 
 outputs:
   agreement_path:

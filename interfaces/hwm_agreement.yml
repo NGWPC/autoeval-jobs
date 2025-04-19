@@ -41,11 +41,12 @@ inputs:
 
   clip_geoms:
     title: Clipping Geometry dictionary
-    description: Optional path/URI to a JSON file containing paths to vector masks (e.g., GeoPackage) used to filter which input points are evaluated or included in the output.
+    description: Optional path/URI to a JSON file containing paths to geopackage or geojson vector masks used to filter which input points are evaluated or included in the output.
     required: false
     schema:
       type: string
       format: uri
+      contentMediaType: application/json
 
 outputs:
   agreement_path:
