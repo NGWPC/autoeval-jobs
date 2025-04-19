@@ -1,98 +1,85 @@
 id: agreement_maker
-description: Creates an agreement map showing where input datasets (raster/vector) spatially concur. Calculates agreement based on the specified fim_type (extent or depth) and produces an output map (Raster or Vector) in EPSG:5070, optionally clipped.
-
+description: Creates a raster agreement map showing where two input raster datasets spatially concur. Calculates agreement based on the specified fim_type (extent or depth) and produces an output raster map in EPSG:5070, optionally clipped.
 outputTransmission:
-  - reference 
+  - reference
 
 arguments:
-  region_tag:
-    title: Region Tag
-    description: An identifier tag for the processing region or job.
-    schema:
-      type: string
-
   fim_type:
     title: FIM Type for Agreement
-    description: Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.
+    description: Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values. Influences output raster format.
     schema:
       type: string
       enum: [extent, depth]
-      default: extent 
-
-  geo_mem_cache:
-    title: Geocomputing Memory Cache
-    description: GDAL cache size in megabytes for optimized raster processing.
-    schema:
-      type: integer
-      minimum: 64
-      maximum: 4096
-      default: 512 
+      default: extent
 
 inputs:
   benchmark_path:
-    title: Benchmark Dataset Path
-    description: Path/URI to the benchmark dataset (e.g., Raster GeoTIFF or Vector GeoPackage/GeoJSON) representing the ground truth or reference flood map (extent or depth).
+    title: Benchmark Raster Path
+    description: Path/URI to the benchmark raster dataset (GeoTIFF) representing the ground truth or reference flood map (extent or depth).
     required: true
     schema:
       type: string
       format: uri
-
+      contentMediaType: image/tiff; application=geotiff
   candidate_path:
-    title: Candidate Dataset Path
-    description: Path/URI to the candidate dataset (e.g., Raster GeoTIFF or Vector GeoPackage/GeoJSON) to compare against the benchmark (extent or depth).
+    title: Candidate Raster Path
+    description: Path/URI to the candidate raster dataset (GeoTIFF) to compare against the benchmark (extent or depth).
     required: true
     schema:
       type: string
       format: uri
-
+      contentMediaType: image/tiff; application=geotiff
   clip_geoms:
     title: Clipping Geometry dictionary
-    description: This is an optional path to json file that that includes paths to geopackage of masks to exclude or include in the final produced agreement.
-    required: false # Assuming clipping is optional
+    description: Optional path/URI to a JSON or GPKG file containing paths to geopackage vector masks used to exclude or include areas in the final agreement raster.
+    required: false
     schema:
       type: string
       format: uri
+      contentMediaType: 
+        anyOf:
+          - application/geopackage+gpkg
+          - application/geo+json
 
 outputs:
   agreement_path:
-    title: Agreement Map Path
-    description: Path for the output agreement map (Raster GeoTIFF or Vector GeoPackage) in EPSG:5070. The format (raster/vector) and raster properties depend on input types and the 'fim_type' argument.
+    title: Agreement Raster Path
+    description: Path for the output agreement raster map (GeoTIFF) in EPSG:5070. Raster properties depend on the 'fim_type' argument.
     schema:
       oneOf:
-        - type: string
+        - title: Extent Agreement Raster
+          description: Output for fim_type 'extent'. Binary agreement (0=NoData/NoFlood, 1=Agree, potentially others depending on implementation logic).
+          type: string
           format: uri
           contentMediaType: image/tiff; application=geotiff
           properties:
             crs:
               const: EPSG:5070
-            compression: lzw 
-            dtype: uint8   
-            nodata: 255      
-          when: 
+            compression:
+              const: lzw
+            dtype:
+              const: uint8
+            nodata:
+              const: 255
+          when:
             properties:
               fim_type:
                 const: extent
-
-        
-        - type: string
+        - title: Depth Agreement Raster
+          description: Output for fim_type 'depth'. Represents agreement based on depth values (e.g., difference, ratio, classification).
+          type: string
           format: uri
           contentMediaType: image/tiff; application=geotiff
           properties:
             crs:
               const: EPSG:5070
-            compression: lzw
-            dtype: float32   
-            nodata: -9999    
-          when: 
+            compression:
+              const: lzw
+            dtype:
+              const: float32
+            nodata:
+              const: -9999
+          when:
             properties:
               fim_type:
                 const: depth
-        - type: string
-          format: uri
-          contentMediaType: application/geopackage+gpkg
-          properties:
-            crs:
-              const: EPSG:5070
-            geometry_type:
-              type: string
-              enum: [Point, MultiPoint]

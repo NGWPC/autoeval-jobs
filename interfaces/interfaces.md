@@ -15,19 +15,15 @@ By convention when outputs are listed for a job it is assumed that these outputs
 From inside the inundate-dev container would run:
 
 ```
-python inundate.py --region_tag 1234 --catchment_data_path /path/to/catchment/json/ --forecast_path /path/to/forecast/ --fim_output_path /path/to/output/ --fim_type extent --geo_mem_cache 512
+python inundate.py --catchment_data_path /path/to/catchment/json/ --forecast_path /path/to/forecast/ --fim_output_path /path/to/output/ --fim_type extent
 ```
 
-This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
+This example lists all possible arguments. See yaml files for optional vs required arguments.
 
 ### Description  
 - Generates flood extent/depth maps from a HAND REM. This job inundates a *single* hand catchment. It can be configured to return either a depth FIM or an extent FIM.
 
 ### Arguments  
-- **region_tag**
-  - Used by the job logs to help pipeline track status of evaluation for different regions.
-- **geo_mem_cache**
-  - The GDAL cache size in megabytes to use when processing gridded data. Raster processing is the most memory intensive portion of this job so this argument effectively limits the memory used by the job.
 - **fim_type**
   - Extent (binary) vs Depth (float values)  
 
@@ -69,34 +65,24 @@ This example lists all possible arguments. See yaml files for optional vs requir
 
 ## Mosaic Maker (`fim_mosaicker`) 
 
-**Implementation status:  partially implemented. Vector mosaicking and mosaicking for depth rasters will be added in PI-6**
+**Implementation status:  partially implemented. mosaicking for depth rasters will be added in PI-6**
 
 ### Example command
 
 From inside the mosaic-dev container would run:
 
 ```
-python mosaic.py --region_tag 1234 --raster_paths /paths/to/rasters/ --hwm_paths /path/to/multipoint/geometries --mosaic_output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent --geo_mem_cache 512
+python mosaic.py --raster_paths /paths/to/rasters/ --hwm_paths /path/to/multipoint/geometries --mosaic_output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent
 ```
 
-This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
+This example lists all possible arguments. See yaml files for optional vs required arguments.
 
 ### Description  
-This job mosaics flood extents and benchmark raster data from either HAND or benchmark sources using a pixel-wise NAN-MAX selection policy. That is, for all the images being mosaicked if there are overlapping raster pixels then the maximum value of the overlapping rasters at that pixel location is selected. No-Data values are not considered when selecting the maximum (they are treated as Nan) unless all the pixels are No-Data. Rasters can be either depth or extent rasters and the mosaicking policy for overlapping rasters will remain the same. Common input combinations and the behavior of the jobs in those cases are described below. 
-
-In the case of raster output the resolution of the produced raster will be determined by the lowest resolution raster in the input data.
-
-If vector data is being mosaicked then the behavior will depend on what type of geometry is described by the vector data. The allowed geometries are point, or multipoint.  
-
-In the case of point or multipoint geometries they can contain either extents or depths in their attributes and will pass through the type of information they are tagged with unless they are being mosaicked with polygon geometries. When a raster is being mosaicked with point geometries, locations where the raster coincide with the point values will be converted to a point geometry by averaging extent or depth pixel values within a buffer of the point location. This value will then be mosaicked with the value described by the overlapping point geometries depth or extent attribute. The raster values that don't coincide with points in the point geometry will be discarded. Additional attributes from the original point geometries will be passed through and returned with the mosaicked geometries.
+This job mosaics flood extents and benchmark raster data from either HAND or benchmark sources using a pixel-wise NAN-MAX selection policy. That is, for all the images being mosaicked if there are overlapping raster pixels then the maximum value of the overlapping rasters at that pixel location is selected. No-Data values are not considered when selecting the maximum (they are treated as Nan) unless all the pixels are No-Data. Rasters can be either depth or extent rasters and the mosaicking policy for overlapping rasters will remain the same. The resolution of the produced raster will be determined by the lowest resolution raster in the input data.
 
 ### Arguments
-- **region_tag**
-  - Used by the job logs to help pipeline track status of evaluation for different regions.
 - **fim_type**
   - This informs the job whether it is mosaicking FIMs with extents or depths.
-- **geo_mem_cache**
-  - The GDAL cache size in megabytes to use when processing gridded data. Raster processing is the most memory intensive portion of this job so this argument effectively limits the memory used by the job.
 
 ### Inputs
 - **raster_paths** and/or **hwm_paths**: 
@@ -122,35 +108,28 @@ In the case of point or multipoint geometries they can contain either extents or
 From inside the agreement-dev container would run:
 
 ```
-python agreement.py --region_tag 1234 --benchmark_path /path/to/raster/or/multipoint --candidate_path /path/to/raster/or/multipoint --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent --geo_mem_cache 512
+python agreement.py --benchmark_path /path/to/raster/ --candidate_path /path/to/raster/ --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent 
 ```
 
-This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
+This example lists all possible arguments. See yaml files for optional vs required arguments.
 
-**Note on implementation memory usage and the geo_mem_cache argument:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation.
+**Note on implementation memory usage and the  argument:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation. If GVAL can't be made to limit its memory usage we will need to pursue a different approach.
 
 ### Description  
-Creates an agreement map showing where a pair of input data (raster or multipoint vector geometries) spatially concur. The job is designed to work with any combination of raster or multipoint input pairs. The job also works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The output is raster or vector data in EPSG:5070. 
-
-In the case of raster output the resolution of the produced raster will be determined by the lowest resolution raster in the input data.
+Creates an agreement map showing where a pair of input rasters spatially concur. The job works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The output is in EPSG:5070. The resolution of the produced raster will be determined by the lowest resolution raster in the input data.
 
 
 ### Arguments  
-- **region_tag**
-  - Used by the job logs to help pipeline track status of evaluation for different regions.
 
 - **fim_type**
   - Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.
-
-- **geo_mem_cache**
-  - The size of the cache gdal uses for raster processing. Since the most memory intensive part of most of the jobs is raster handling this is a way to help limit the memory usage of jobs.
-  
+ 
 ### Inputs
 - **benchmark_path**:  
-  - path to raster or vector (as geopackage) benchmark data. If a vector must be either a point, multipoint, multipolygon, or polygon geometry.  
+  - path to depth or extent raster benchmark data.  
 
 - **candidate_path**:  
-  - path to raster or vector (as geopackage) benchmark data. If a vector must be either a point, multipoint, multipolygon, or polygon geometry.  
+  - path to depth or extent raster benchmark data.   
 
 - **clip_geoms**
   - This is an optional path to json file that that includes paths to geopackage of masks to exclude or include in the final produced agreement. The input format is identical to the previous format that was previously used to mask areas over which to evaluate FIM model skill. Each mask geometry can also be buffered by setting a buffer flag to an integer value (with units of meters) in the sub-dictionaries "buffer" key.
@@ -171,11 +150,62 @@ In the case of raster output the resolution of the produced raster will be deter
   ```
   
 ### Outputs 
-Output is either a single raster or a geopackage of vector information.
+Output is a single raster 
 - **agreement_path**
-  - **Raster**
-    - See `agreement_maker.yml` for a description of the output raster format.
-  - **Vector**: 
+    - See `agreement_maker.yml` for a description of the output raster format for continuous or categorical agreement rasters.
+
+---
+
+## HWM Agreement Maker (`hwm_agreement`) 
+
+**Implementation status:  Will be implemented in NGWPC PI-6**
+
+### Example command
+
+From inside the agreement-dev container would run:
+
+```
+python agreement.py --benchmark_path /path/to/multipoint --candidate_path /path/to/multipoint --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent 
+```
+
+This example lists all possible arguments. See yaml files for optional vs required arguments.
+
+### Description  
+Creates an agreement multipoint geometry showing where a FIM raster and a set of HWM points associated with an event spatially concur. The job works with depth or extent rasters with the assumption that a given HWM survey will the attributes required to produce an agreement map. The output is in EPSG:5070. The agreement geometry will be the same HWM point geometry with attributes indicating agreement between the HWM points and the raster being compared.
+
+### Arguments  
+
+- **fim_type**
+  - Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.
+ 
+### Inputs
+- **benchmark_path**:  
+  - path to vector (as geopackage) benchmark data. ~must be either a point or multipoint geometry.  
+
+- **candidate_path**:  
+  - path to vector (as geopackage) benchmark data. If a vector must be either a point or multipoint geometry.  
+
+- **clip_geoms**
+  - This is an optional path to json file that that includes paths to geopackage of masks to exclude or include in the final produced agreement. The input format is identical to the previous format that was previously used to mask areas over which to evaluate FIM model skill. Each mask geometry can also be buffered by setting a buffer flag to an integer value (with units of meters) in the sub-dictionaries "buffer" key.
+
+  ```json
+  {
+    "levees": {
+      "path": "path/to/levee/file",
+      "buffer": null,
+      "operation": "exclude"
+    },
+    "waterbodies": {
+      "path": "path/to/waterbody/file",
+      "buffer": null,
+      "operation": "exclude"
+    }
+  }
+  ```
+  
+### Outputs 
+Output is a geopackage of vector information.
+- **agreement_path**
     - See `agreement_maker.yml` for a description of output vector format. The returned geopackage could have additional attributes that are passed through from the input vector data to the output data. 
 
 ---
@@ -190,29 +220,52 @@ Output is either a single raster or a geopackage of vector information.
 From inside the metrics-dev container would run command below:
 
 ```
-python metrics.py --region_tag 1234 --agreement_path /path/to/agreement/ --metrics_path /path/to/metrics/json --geo_mem_cache 512
+python metrics.py --agreement_path /path/to/agreement/ --metrics_path /path/to/metrics/json
 ```
 
-This example lists all possible arguments. See yaml files for optional vs required arguments and argument abbreviations.
+This example lists all possible arguments. See yaml files for optional vs required arguments.
 
-**Note on implementation memory usage and the geo_mem_cache argument:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation.
+**Note on implementation memory usage:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation. If GVAL can't be made to limit its memory usage we will need to pursue a different approach.
 
 ### Description  
-This job is designed to take an agreement map and calculate summary metrics of the agreement of two FIMs over a given ROI.
+This job is designed to take an agreement map raster and calculate summary metrics of the agreement of two FIMs over a given ROI.
 
 ### Arguments  
-- **region_tag**
-  - Used by the job logs to help pipeline track status of evaluation for different regions.
-  
-- **geo_mem_cache**
-  - The size of the cache gdal uses for raster processing. Since the most memory intensive part of most of the jobs is raster handling this is a way to help limit the memory usage of jobs.
+
 
 ### Input  
 - **agreement_path**
-  - Accepts raster TIFF or geopackage files containing point or polygon geometries. The type of agreement map written to agreement_path will be surmised by the number and type of data values in the raster or the geometry's attributes. 
+  - Path to an agreement raster over which the metrics will be calculated.
+
+### Output  
+- **metrics_path**
+  - The output will be a json file containing the metrics the user requested. `metrics_calculator.yml` lists a small subset of possible metrics.
+
+---
+
+##  HWM Metrics Calculator (`hwm_metrics`) 
+
+### Example command
+
+From inside the metrics-dev container would run command below:
+
+```
+python metrics.py --agreement_path /path/to/agreement/ --metrics_path /path/to/metrics/json
+```
+
+This example lists all possible arguments. See yaml files for optional vs required arguments.
+
+### Description  
+This job is designed to take an agreement map raster and calculate summary metrics of the agreement of two FIMs over a given ROI.
+
+### Arguments  
+
+
+### Input  
+- **agreement_path**
+  - Path to an agreement gpkg containing a multipoint geometry with the attributes over which the metrics will be calculated.
 
 ### Output  
 - **metrics_path**
   - The output will be a json file containing the metrics the user requested. `metrics_calculator.yml` lists a small subset of possible metrics.
 ---
-

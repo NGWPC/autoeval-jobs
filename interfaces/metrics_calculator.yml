@@ -1,62 +1,35 @@
 id: metrics_calculator
-description: Computes validation metrics from an agreement map (raster or vector polygons in EPSG:5070) and saves them to a JSON file.
+description: Computes validation metrics (e.g., CSI, POD, FAR) from a raster agreement map (GeoTIFF in EPSG:5070) and saves them to a JSON file. Assumes specific pixel values represent agreement categories based on the preceding agreement step.
 outputTransmission:
   - value
   - reference
 
 arguments:
-  
-  region_tag:
-    title: Region Tag
-    description: An identifier tag for the processing region or job.
-    schema:
-      type: string
-  
-  geo_mem_cache:
-    title: Geocomputing Memory Cache
-    description: GDAL cache size in megabytes (used if agreement map is raster).
-    required: false 
-    schema:
-      type: integer
-      minimum: 64
-      maximum: 4096 
-      default: 512 
 
 inputs:
   agreement_path:
-    title: Agreement Dataset Path
-    description: Path/URI to the input agreement map (Raster GeoTIFF or Vector GeoPackage with polygons) in CONUS Albers (EPSG:5070).
-    required: true 
+    title: Raster Agreement Map Path
+    description: Path/URI to the input raster agreement map (GeoTIFF) in CONUS Albers (EPSG:5070). Pixel values should encode agreement results (e.g., from raster_raster_agreement component).
+    required: true
     schema:
-      oneOf: 
-        - type: string
-          format: uri
-          contentMediaType: image/tiff; application=geotiff
-          properties:
-            crs:
-              const: EPSG:5070
-        - type: string
-          format: uri
-          contentMediaType: application/geopackage+gpkg
-          properties:
-            geometry_type:
-                type: string
-                enum: [Point, MultiPoint] 
-            crs:
-              const: EPSG:5070
-
+      type: string
+      format: uri
+      contentMediaType: image/tiff; application=geotiff
+      properties:
+        crs:
+          const: EPSG:5070
 outputs:
   metrics_path:
     title: Metrics Output Path
     description: |
       Path/URI where the calculated validation metrics will be saved as a JSON file.
-      The JSON file will contain an object with performance metrics, typically including:
+      The JSON file will contain an object with performance metrics derived from the raster comparison:
       ```json
       {
         "csi": <number between 0 and 1>,
         "pod": <number between 0 and 1>,
         "far": <number between 0 and 1>
-        // Other metrics might be included depending on calculation specifics
+        // Other metrics
       }
       ```
       Where:
@@ -64,7 +37,6 @@ outputs:
       - `pod`: Probability of Detection (Hit Rate)
       - `far`: False Alarm Ratio
     schema:
-      # The output itself is the path to the file
       type: string
       format: uri
-      contentMediaType: application/json 
+      contentMediaType: application/json

@@ -1,0 +1,63 @@
+id: hwm_agreement
+description: Compares benchmark high water mark points against a candidate raster dataset. Determines agreement by performing a proximity analysis at each point location. Produces an output vector dataset (GeoPackage) in EPSG:5070 containing the tagged points, optionally clipped.
+
+outputTransmission:
+  - reference
+
+arguments:
+  fim_type:
+    title: FIM Type for Agreement
+    description: Specifies whether agreement is based on checking if points fall within the raster's spatial 'extent' (binary) or extracting the raster's 'depth' value at the point location. Influences output vector attributes.
+    schema:
+      type: string
+      enum: [extent, depth]
+      default: extent
+
+inputs:
+  benchmark_path:
+    title: Benchmark Points Path
+    description: Path/URI to the benchmark vector dataset (e.g., GeoPackage, GeoJSON) containing Point/MultiPoint geometries to compare against the benchmark raster.
+    required: true
+    schema:
+      type: string
+      format: uri
+      contentMediaType: 
+        anyOf:
+          - application/geopackage+gpkg
+          - application/geo+json
+      properties:
+        geometry_type:
+          type: string
+          enum: [Point, MultiPoint] 
+
+  candidate_path:
+    title: Candidate Raster Path
+    description: Path/URI to the candidate raster dataset (GeoTIFF) representing the reference flood map (extent or depth) against which points will be checked.
+    required: true
+    schema:
+      type: string
+      format: uri
+      contentMediaType: image/tiff; application=geotiff
+
+  clip_geoms:
+    title: Clipping Geometry dictionary
+    description: Optional path/URI to a JSON file containing paths to vector masks (e.g., GeoPackage) used to filter which input points are evaluated or included in the output.
+    required: false
+    schema:
+      type: string
+      format: uri
+
+outputs:
+  agreement_path:
+    title: Agreement Points Path
+    description: Path for the output vector dataset (GeoPackage) in EPSG:5070. Contains the input points tagged with agreement attributes (e.g., 'agreement_extent' or 'agreement_depth') based on the 'fim_type'.
+    schema:
+      type: string
+      format: uri
+      contentMediaType: application/geopackage+gpkg
+      properties:
+        crs:
+          const: EPSG:5070
+        geometry_type:
+          type: string
+          enum: [Point, MultiPoint] 

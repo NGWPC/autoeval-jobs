@@ -23,6 +23,8 @@ The docker compose services follow the following policy for environment variable
 - variables that need to be dynamically updated (like AWS credentials with a fixed, short expiration date) will be referenced in the "environment" block of the docker compose service definition and will be read from the user's local shell environment. Currently we are accessing an S3 bucket that requires credentials. To populate your Docker containers with these credentials you would put your AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN in your host computer's bash shell's environment.
 - Fixed variables will be referenced from a .env file in an env_file block. An example .env file is located at [example.env](example.env) 
 
+For the hand_inundator and fim_mosaicker jobs the GDAL_CACHEMAX environment variable also needs to be set. This variable controls the amount of memory that the hand_inundator and fim_mosaicker jobs use for raster processing.
+
 ## Using Docker Compose dev services to interactively run and debug jobs
 
 Here is an example for how to enter into an interactive shell for the fim_mosaicker job:

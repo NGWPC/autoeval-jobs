@@ -4,21 +4,6 @@ outputTransmission:
   - reference 
 
 arguments:
-  region_tag:
-    title: Region Tag
-    description: An identifier tag for the processing region or job.
-    schema:
-      type: string 
-
-  geo_mem_cache:
-    title: Geocomputing Memory Cache
-    description: GDAL cache size in megabytes for optimized raster processing
-    schema:
-      type: integer
-      minimum: 64
-      maximum: 8192 
-      default: 512
-
   fim_type:
     title: FIM Output Type
     description: Choose between depth values or binary inundation extent for the output raster.

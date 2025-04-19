@@ -1,5 +1,5 @@
 id: fim_mosaicker
-description: Mosaics and homogenizes overlapping flood observations (raster or vector) into a combined dataset with optional clipping/reprojection
+description: Mosaics and homogenizes overlapping raster flood observations into a combined dataset with optional clipping/reprojection
 outputTransmission:
   - reference # Indicates output metadata/path is transmitted, not the full data 
 
@@ -13,48 +13,17 @@ arguments:
       enum: [depth, extent]
       default: depth
 
-  geo_mem_cache:
-    title: Geocomputing Memory Cache
-    description: GDAL cache size in megabytes for optimized raster processing
-    schema:
-      type: integer
-      minimum: 64
-      maximum: 4096
-      default: 256
-
-  region_tag:
-    title: Region Tag
-    description: An identifier tag for the processing region or job.
-    schema:
-      type: string 
-
 inputs:
   raster_paths:
     title: Input Raster Paths
     description: Array of paths/URIs to input raster flood observations (e.g., GeoTIFFs).
-    required: false # Assumes rasters might be optional if vectors are provided
+    required: true
     schema:
       type: array
       items:
         type: string
         format: uri
         contentMediaType: image/tiff; application=geotiff
-      minItems: 1 
-
-  hwm_paths:
-    title: Input Multipoint Vector Paths
-    description: Array of paths/URIs to input vector files containing multipoint geometries (e.g., GeoJSON, GeoPackage).
-    required: false # Assumes vectors might be optional if rasters are provided
-    schema:
-      type: array
-      items:
-        oneOf:
-          - type: string
-            format: uri
-            contentMediaType: application/geo+json
-          - type: string
-            format: uri
-            contentMediaType: application/geopackage+gpkg
       minItems: 1 
 
   clip_geometry_path:
@@ -102,13 +71,3 @@ outputs:
             properties:
               fim_type:
                 const: depth
-        - type: string
-          format: uri 
-          contentMediaType: application/geopackage+gpkg
-          properties: 
-            geometry_type: 
-              type: string
-              enum: [point, multipoint] 
-            crs:
-              const: EPSG:5070
-              description: Albers Equal Area Continental US projection
