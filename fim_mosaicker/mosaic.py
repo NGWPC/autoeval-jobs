@@ -7,6 +7,7 @@ from typing import Union, Optional, Literal
 import os
 import sys
 import fiona
+import json
 import argparse
 from pathlib import Path
 
@@ -247,22 +248,42 @@ def mosaic_rasters(
 if __name__ == "__main__":
     """
     Entry point to the mosaic_rasters function that mosaics a list of FIM extents or depths together.
+
+    Expected JSON format for raster paths:
+    [
+        "/path/to/raster1.tif",
+        "/path/to/raster2.tif",
+        ...
+    ]
+
+    The JSON can be provided either:
+    1. As a JSON string directly to --raster_paths
+    2. As a path to a JSON file containing the list of paths
+
+    Example JSON file contents:
+    [
+        "/data/fim/raster_001.tif",
+        "/data/fim/raster_002.tif",
+        "/data/fim/raster_003.tif"
+    ]
     """
 
     parser = argparse.ArgumentParser(
-        description="Mosaic multiple rasters with optional clipping.",
+        description="Mosaic multiple rasters provided as a JSON list, with optional clipping.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument(
-        "raster_paths",
-        nargs="+",
-        type=Path,
-        help="Paths to the input rasters to be mosaicked",
+        "--raster_paths",
+        required=True,
+        type=str,
+        help="Required: JSON string representation of a list of input raster paths OR path to a JSON file containing such a list",
     )
-
     parser.add_argument(
-        "output_path", type=Path, help="Path where to save the mosaicked output"
+        "--output_path",
+        required=True,
+        type=Path,
+        help="Path to save the mosaicked output",
     )
 
     parser.add_argument(
@@ -287,10 +308,59 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Check if raster_paths is a path to a JSON file
+    if os.path.isfile(args.raster_paths):
+        try:
+            with open(args.raster_paths, "r") as f:
+                loaded_paths = json.load(f)
+            print(
+                f"Loaded {len(loaded_paths)} raster paths from file: {args.raster_paths}"
+            )
+        except json.JSONDecodeError:
+            print(
+                f"Error: Invalid JSON in file {args.raster_paths}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except Exception as e:
+            print(
+                f"Error reading file {args.raster_paths}: {str(e)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    else:
+        # Treat as a JSON string
+        try:
+            loaded_paths = json.loads(args.raster_paths)
+            print(f"Parsed {len(loaded_paths)} raster paths from JSON string")
+        except json.JSONDecodeError:
+            print(
+                f"Error: Invalid JSON provided to --raster_paths: {args.raster_paths}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # Validate the loaded paths
+    if isinstance(loaded_paths, list):
+        # Ensure all elements are strings
+        raster_paths_list = [str(p) for p in loaded_paths]
+    else:
+        print(
+            f"Error: JSON must contain a list of raster paths. Found: {type(loaded_paths).__name__}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not raster_paths_list:
+        print(
+            "Error: The list of raster paths is empty.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     try:
-        # Convert Path objects to strings for the main function
         output_raster = mosaic_rasters(
-            raster_paths=[str(p) for p in args.raster_paths],
+            raster_paths=raster_paths_list,
             output_path=str(args.output_path),
             clip_geometry=str(args.clip_geometry) if args.clip_geometry else None,
             fim_type=args.fim_type,
