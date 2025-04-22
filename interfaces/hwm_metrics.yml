@@ -1,5 +1,5 @@
 id: hwm_metrics
-description: Computes validation metrics from a vector agreement dataset (GeoPackage Points/MultiPoints in EPSG:5070) containing tagged points (e.g., High Water Marks) and saves them to a JSON file. Assumes points have attributes indicating agreement status or values derived from comparison with a benchmark raster.
+description: Computes validation metrics from a vector agreement dataset (GeoPackage Points/MultiPoints) containing tagged points (e.g., High Water Marks) and saves them to a JSON file. Assumes points have attributes indicating agreement status or values derived from comparison with a benchmark raster.
 outputTransmission:
   - value
   - reference
@@ -9,19 +9,17 @@ arguments:
 inputs:
   agreement_path:
     title: Vector Agreement Points Path
-    description: Path/URI to the input vector agreement dataset (GeoPackage with Points/MultiPoints) in CONUS Albers (EPSG:5070). Must contain attributes indicating agreement status.
+    description: Path/URI to the input vector agreement dataset (GeoPackage with Points/MultiPoints) in. Must contain attributes indicating agreement status.
     required: true
     schema:
       type: string
       format: uri
       contentMediaType: application/geopackage+gpkg
       properties:
-        crs:
-          const: EPSG:5070
         geometry_type:
           type: string
           enum: [Point, MultiPoint]
-        attributes: # Describe expected attributes - crucial for implementation
+        attributes: # Describe expected attributes - crucial for actual implementation
           type: object
           description: ""
 

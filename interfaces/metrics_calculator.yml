@@ -1,5 +1,5 @@
 id: metrics_calculator
-description: Computes validation metrics (e.g., CSI, POD, FAR) from a raster agreement map (GeoTIFF in EPSG:5070) and saves them to a JSON file. Assumes specific pixel values represent agreement categories based on the preceding agreement step.
+description: Computes validation metrics (e.g., CSI, POD, FAR) from a raster agreement map and saves them to a JSON file. Assumes specific pixel values represent agreement categories based on the preceding agreement step.
 outputTransmission:
   - value
   - reference
@@ -9,15 +9,13 @@ arguments:
 inputs:
   agreement_path:
     title: Raster Agreement Map Path
-    description: Path/URI to the input raster agreement map (GeoTIFF) in CONUS Albers (EPSG:5070). Pixel values should encode agreement results (e.g., from raster_raster_agreement component).
+    description: Path/URI to the input raster agreement map (GeoTIFF). Pixel values should encode agreement results (e.g., from raster_raster_agreement component).
     required: true
     schema:
       type: string
       format: uri
       contentMediaType: image/tiff; application=geotiff
-      properties:
-        crs:
-          const: EPSG:5070
+
 outputs:
   metrics_path:
     title: Metrics Output Path

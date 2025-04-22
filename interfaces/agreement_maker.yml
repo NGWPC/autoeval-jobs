@@ -1,5 +1,5 @@
 id: agreement_maker
-description: Creates a raster agreement map showing where two input raster datasets spatially concur. Calculates agreement based on the specified fim_type (extent or depth) and produces an output raster map in EPSG:5070, optionally clipped.
+description: Creates a raster agreement map showing where two input raster datasets spatially concur. Calculates agreement based on the specified fim_type (extent or depth) and produces an output raster map, optionally clipped.
 outputTransmission:
   - reference
 
@@ -21,6 +21,9 @@ inputs:
       type: string
       format: uri
       contentMediaType: image/tiff; application=geotiff
+      properties:
+        crs:
+          const: EPSG:5070
   candidate_path:
     title: Candidate Raster Path
     description: Path/URI to the candidate raster dataset (GeoTIFF) to compare against the benchmark (extent or depth).
@@ -29,6 +32,9 @@ inputs:
       type: string
       format: uri
       contentMediaType: image/tiff; application=geotiff
+      properties:
+        crs:
+          const: EPSG:5070
   clip_geoms:
     title: Clipping Geometry dictionary
     description: Optional path/URI to a file containing paths to geopackage or geojson vector masks used to exclude or include areas in the final agreement raster.
@@ -50,8 +56,6 @@ outputs:
           format: uri
           contentMediaType: image/tiff; application=geotiff
           properties:
-            crs:
-              const: EPSG:5070
             compression:
               const: lzw
             dtype:
@@ -68,8 +72,6 @@ outputs:
           format: uri
           contentMediaType: image/tiff; application=geotiff
           properties:
-            crs:
-              const: EPSG:5070
             compression:
               const: lzw
             dtype:

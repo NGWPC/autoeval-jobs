@@ -1,5 +1,5 @@
 id: hwm_agreement
-description: Compares benchmark high water mark points against a candidate raster dataset. Determines agreement by performing a proximity analysis at each point location. Produces an output vector dataset (GeoPackage) in EPSG:5070 containing the tagged points, optionally clipped.
+description: Compares benchmark high water mark points against a candidate raster dataset. Determines agreement by performing a proximity analysis at each point location. Produces an output vector dataset (GeoPackage) containing the tagged points, optionally clipped.
 
 outputTransmission:
   - reference
@@ -38,6 +38,9 @@ inputs:
       type: string
       format: uri
       contentMediaType: image/tiff; application=geotiff
+      properties:
+        crs:
+          const: EPSG:5070
 
   clip_geoms:
     title: Clipping Geometry dictionary
@@ -57,8 +60,9 @@ outputs:
       format: uri
       contentMediaType: application/geopackage+gpkg
       properties:
-        crs:
-          const: EPSG:5070
         geometry_type:
           type: string
           enum: [Point, MultiPoint] 
+        attributes: # Describe expected attributes - crucial for actual implementation
+          type: object
+          description: ""
