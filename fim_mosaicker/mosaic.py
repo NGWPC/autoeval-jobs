@@ -10,6 +10,11 @@ import fiona
 import json
 import argparse
 from pathlib import Path
+import boto3
+
+
+def is_s3_path(path: str) -> bool:
+    return path.startswith("s3://")
 
 
 def mosaic_rasters(
@@ -26,7 +31,7 @@ def mosaic_rasters(
     raster_paths : list[str]
         List of paths to rasters to be mosaicked.
     output_path : str
-        Path where to save the mosaicked output.
+        Path to save the mosaicked output. Can be local or S3 path.
     clip_geometry : str or dict, optional
         Vector file path or GeoJSON-like geometry to clip the output raster.
     fim_type : str, optional
@@ -63,18 +68,34 @@ def mosaic_rasters(
         nodata = 255
         dtype = "uint8"
 
-    # Enhanced GDAL environment settings for better performance
+    # Enhanced GDAL environment settings for better performance and S3 support
     config_options = {
         "GDAL_CACHEMAX": geo_mem_cache,
-        "VSI_CACHE_SIZE": 1024 * 1024 * min(256, geo_mem_cache),  # VSI cache in bytes
-        "GDAL_DISABLE_READDIR_ON_OPEN": "TRUE",  # Performance boost for S3/cloud storage
+        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",  # Performance boost for S3/cloud storage
         "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.vrt",  # Limit allowed extensions
+        "AWS_VIRTUAL_HOSTING": "TRUE",  # Enable virtual hosting style for S3
+        "VSI_CACHE": "TRUE",
+        "CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE": "YES",
+        "VSI_CACHE_SIZE": "50000000",  # 50MB cache
     }
+
+    # Use boto3 for AWS authentication instead of direct GDAL config
+    session = None
+    if is_s3_path(output_path) or any(is_s3_path(path) for path in raster_paths):
+        # Let boto3 handle credentials from environment variables or AWS config
+        session = boto3.Session()
+        # Verify we have credentials if needed
+        if session.get_credentials() is None:
+            print("Warning: No AWS credentials found. Using anonymous access.")
 
     # Open all rasters and get their metadata
     src_files = []
     try:
         with rasterio.Env(**config_options):
+            # Register boto3 session with GDAL if available
+            if session:
+                rasterio.env.ensure_env_with_credentials(session)
+
             for path in raster_paths:
                 src = rasterio.open(path)
                 src_files.append(src)
@@ -120,8 +141,13 @@ def mosaic_rasters(
                 }
             )
 
+            # Only create directories for local paths, not for S3
+            if not is_s3_path(output_path):
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+            print(f"Writing output to: {output_path}")
+
             # Create output raster
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             with rasterio.open(output_path, "w", **profile) as dst:
                 # Get a list of all blocks for processing
                 windows = list(dst.block_windows(1))
@@ -266,6 +292,9 @@ if __name__ == "__main__":
         "/data/fim/raster_002.tif",
         "/data/fim/raster_003.tif"
     ]
+
+    Supports S3 paths in the format:
+    s3://bucket-name/path/to/file.tif
     """
 
     parser = argparse.ArgumentParser(
@@ -282,13 +311,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_path",
         required=True,
-        type=Path,
-        help="Path to save the mosaicked output",
+        type=str,
+        help="Path to save the mosaicked output (can be local or S3 path)",
     )
 
     parser.add_argument(
         "--clip-geometry",
-        type=Path,
+        type=str,
         help="Optional path to vector file for clipping the output",
     )
 
@@ -361,8 +390,8 @@ if __name__ == "__main__":
     try:
         output_raster = mosaic_rasters(
             raster_paths=raster_paths_list,
-            output_path=str(args.output_path),
-            clip_geometry=str(args.clip_geometry) if args.clip_geometry else None,
+            output_path=args.output_path,
+            clip_geometry=args.clip_geometry if args.clip_geometry else None,
             fim_type=args.fim_type,
             geo_mem_cache=args.geo_mem_cache,
         )

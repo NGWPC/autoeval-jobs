@@ -1,7 +1,7 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.2
 
 # Create and set working directory for deployable code
-WORKDIR /deployable
+WORKDIR /deploy
 
 # Copy requirements file
 COPY requirements.txt ./
