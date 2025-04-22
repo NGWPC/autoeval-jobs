@@ -1,23 +1,10 @@
 id: fim_mosaicker
-description: Mosaics and homogenizes overlapping flood observations (raster or vector) into a combined dataset with optional clipping/reprojection
+description: Mosaics and homogenizes overlapping raster flood observations into a combined dataset with optional clipping/reprojection
 outputTransmission:
-  - reference
+  - reference # Indicates output metadata/path is transmitted, not the full data 
+
 arguments:
-  target_res:
-    title: Target Resolution
-    description: Resolution in CRS units (required for raster outputs)
-    schema:
-      type: object
-      properties:
-        x:
-          type: number
-          minimum: 0
-          exclusiveMinimum: true
-        y: 
-          type: number
-          minimum: 0
-          exclusiveMinimum: true
-      required: [x, y]
+
   fim_type:
     title: FIM Type
     description: Type of flood inundation map output
@@ -25,70 +12,62 @@ arguments:
       type: string
       enum: [depth, extent]
       default: depth
-  geo_mem_cache:
-    title: Geocomputing Memory Cache
-    description: GDAL cache size in megabytes for optimized raster processing
-    schema:
-      type: integer
-      minimum: 64
-      maximum: 4096
-      default: 256
+
 inputs:
-  inputFiles:
-    title: Input Datasets
-    description: Array of flood observations (rasters or vector features)
+  raster_paths:
+    title: Input Raster Paths
+    description: Array of paths/URIs to input raster flood observations (e.g., GeoTIFFs).
+    required: true
     schema:
       type: array
       items:
-        oneOf:
-          - type: string
-            format: uri
-            contentMediaType: image/tiff; application=geotiff
-          - type: string
-            format: uri
-            contentMediaType: application/geo+json
-          - type: string  
-            format: uri
-            contentMediaType: application/geopackage+gpkg
-            properties:
-              layer_type:
-                type: string
-                enum: [polygon, multipolygon, point, multipoint]
-      minItems: 1
-  clipGeometry:
-    title: Clipping Geometry
-    description: GeoJSON polygon defining clipping boundaries for output
+        type: string
+        format: uri
+        contentMediaType: image/tiff; application=geotiff
+      minItems: 1 
+
+  clip_geometry_path:
+    title: Clipping Geometry Path
+    description: Path/URI to a vector file (e.g., GeoJSON, GPKG) containing polygon(s) for clipping the output mosaic.
+    required: false 
     schema:
-      oneOf:
-        - allOf:
-          - format: geojson-geometry
-          - $ref: http://schemas.opengis.net/ogcapi/features/part1/1.0/openapi/schemas/geometryGeoJSON.yaml
+      type: string
+      format: uri
+
 outputs:
-  mosaickedResult:
-    title: Combined Dataset
-    description: Unified flood observation data in raster or vector format (EPSG:5070)
+  mosaic_output_path:
+    title: Mosaicked Dataset Path
+    description: Path for the unified flood observation output (Raster GeoTIFF or Vector GeoPackage, EPSG:5070).
     schema:
-      oneOf:
+      oneOf: 
         - type: string
-          format: uri
+          format: uri 
           contentMediaType: image/tiff; application=geotiff
-          properties:
-            crs: 
+          properties: 
+            crs:
               const: EPSG:5070
               description: Standard US analysis projection with equal area preservation
             units: meters
+            dtype: uint8        
+            nodata: 255         
+            compression: lzw    
+          when: 
             properties:
-              fimType:
-                type: string
-                enum: [depth, extent]
-                description: Type of FIM output - depth (float32) or extent (uint8)
+              fim_type:
+                const: extent
+
         - type: string
-          format: uri
-          contentMediaType: application/geopackage+gpkg
+          format: uri 
+          contentMediaType: image/tiff; application=geotiff
           properties: 
-            geometry_type:
-              type: string
-              enum: [polygon, multipolygon, point, multipoint]
             crs:
               const: EPSG:5070
-              description: Albers Equal Area Continental US projection
+              description: Standard US analysis projection with equal area preservation
+            units: meters
+            dtype: float32      
+            nodata: -9999       
+            compression: lzw    
+          when: 
+            properties:
+              fim_type:
+                const: depth

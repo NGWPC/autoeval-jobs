@@ -1,46 +1,40 @@
 id: metrics_calculator
-description: Computes validation metrics from an agreement map (raster or vector polygons in EPSG:5070)
+description: Computes validation metrics (e.g., CSI, POD, FAR) from a raster agreement map and saves them to a JSON file. Assumes specific pixel values represent agreement categories based on the preceding agreement step.
 outputTransmission:
   - value
   - reference
+
+arguments:
+
 inputs:
-  agreementMap:
-    title: Agreement Dataset
-    description: Raster or vector polygons showing agreement areas in CONUS Albers (EPSG:5070)
+  agreement_path:
+    title: Raster Agreement Map Path
+    description: Path/URI to the input raster agreement map (GeoTIFF). Pixel values should encode agreement results (e.g., from raster_raster_agreement component).
+    required: true
     schema:
-      oneOf:
-        - type: string
-          format: uri
-          contentMediaType: image/tiff; application=geotiff
-          properties:
-            crs: 
-              const: EPSG:5070
-        - type: string
-          format: uri
-          contentMediaType: application/geopackage+gpkg
-          properties:
-            geometry_type: polygon
-            crs:
-              const: EPSG:5070
+      type: string
+      format: uri
+      contentMediaType: image/tiff; application=geotiff
+
 outputs:
-  metrics:
-    title: Validation Metrics 
-    description: Object containing performance metrics for agreement between observations and models
+  metrics_path:
+    title: Metrics Output Path
+    description: |
+      Path/URI where the calculated validation metrics will be saved as a JSON file.
+      The JSON file will contain an object with performance metrics derived from the raster comparison:
+      ```json
+      {
+        "csi": <number between 0 and 1>,
+        "pod": <number between 0 and 1>,
+        "far": <number between 0 and 1>
+        // Other metrics
+      }
+      ```
+      Where:
+      - `csi`: Critical Success Index
+      - `pod`: Probability of Detection (Hit Rate)
+      - `far`: False Alarm Ratio
     schema:
-      type: object
-      properties:
-        csi:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Critical Success Index
-        pod:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Probability of Detection
-        far:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: False Alarm Ratio
+      type: string
+      format: uri
+      contentMediaType: application/json

@@ -1,112 +1,84 @@
 id: agreement_maker
-description: Creates an agreement map showing where input datasets (raster/vector) spatially concur. Works with depth or extent data. Produces either a depth agreement map or an extent agreement map, as raster or vector data in EPSG:5070.
+description: Creates a raster agreement map showing where two input raster datasets spatially concur. Calculates agreement based on the specified fim_type (extent or depth) and produces an output raster map, optionally clipped.
+outputTransmission:
+  - reference
 
 arguments:
-  targetResolution:
-    title: Resolution
-    description: desired resolution of output in cases whene output will be returned as raster (meters)
+  fim_type:
+    title: FIM Type for Agreement
+    description: Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values. Influences output raster format.
     schema:
-      type: object
-      properties:
-        x:
-          type: number
-          minimum: 0
-          exclusiveMinimum: true
-        y:
-          type: number
-          minimum: 0
-          exclusiveMinimum: true
-      required: [x, y]
+      type: string
+      enum: [extent, depth]
+      default: extent
 
 inputs:
-  dataset1:
-    title: First Dataset
-    description: Depth or extent dataset, raster or vector, in EPSG:5070
+  benchmark_path:
+    title: Benchmark Raster Path
+    description: Path/URI to the benchmark raster dataset (GeoTIFF) representing the ground truth or reference flood map (extent or depth).
+    required: true
     schema:
-      oneOf:
-        - type: string
-          format: uri
-          contentMediaType: image/tiff; application=geotiff
-          properties:
-            crs:
-              const: EPSG:5070
-            fim_type:
-              type: string
-              enum: [depth, extent]
-        - type: string
-          format: uri
-          contentMediaType: application/geopackage+sqlite3  # For vector data formats
-          properties:
-            crs:
-              const: EPSG:5070
-            geometry_type:
-              type: string
-              enum: [Point, MultiPoint, Polygon, Multipolygon]
-            fim_type:
-              type: string
-              enum: [depth, extent]
-
-  dataset2:
-    title: Second Dataset
-    description: Depth or extent dataset, raster or vector, in EPSG:5070
+      type: string
+      format: uri
+      contentMediaType: image/tiff; application=geotiff
+      properties:
+        crs:
+          const: EPSG:5070
+  candidate_path:
+    title: Candidate Raster Path
+    description: Path/URI to the candidate raster dataset (GeoTIFF) to compare against the benchmark (extent or depth).
+    required: true
     schema:
-      $ref: '#/inputs/dataset1/schema'
-
-  masks:
-    title: Mask Areas
-    description: JSON object defining geometric masks to include/exclude. Keys are mask names, values define path (URI to GPKG), buffer (meters or null), and operation (include/exclude).
+      type: string
+      format: uri
+      contentMediaType: image/tiff; application=geotiff
+      properties:
+        crs:
+          const: EPSG:5070
+  clip_geoms:
+    title: Clipping Geometry dictionary
+    description: Optional path/URI to a file containing paths to geopackage or geojson vector masks used to exclude or include areas in the final agreement raster.
+    required: false
     schema:
-      type: object
-      additionalProperties:
-        type: object
-        properties:
-          path:
-            type: string
-            format: uri
-            contentMediaType: application/geopackage+sqlite3
-          buffer:
-            oneOf:
-              - type: number
-                minimum: 0
-              - type: "null"
-          operation:
-            type: string
-            enum: [include, exclude]
-        required: [path, buffer, operation]
-      required: []
+      type: string
+      format: uri
+      contentMediaType: application/json
 
 outputs:
-  agreementMap:
-    title: Agreement Map
-    description: Depth or extent agreement map. Will be raster or vector data in EPSG:5070.
+  agreement_path:
+    title: Agreement Raster Path
+    description: Path for the output agreement raster map (GeoTIFF) in EPSG:5070. Raster properties depend on the 'fim_type' argument.
     schema:
       oneOf:
-        - type: string
+        - title: Extent Agreement Raster
+          description: Output for fim_type 'extent'. Binary agreement (0=NoData/NoFlood, 1=Agree, potentially others depending on implementation logic).
+          type: string
           format: uri
           contentMediaType: image/tiff; application=geotiff
+          properties:
+            compression:
+              const: lzw
+            dtype:
+              const: uint8
+            nodata:
+              const: 255
           when:
             properties:
-              outputFormat:
-                const: raster
-          properties:
-            crs:
-              const: EPSG:5070
-            compression: lzw
-            dtype:
-              type: string
-              enum:
-                - float32  # For depth agreement maps
-                - uint8   # For extent agreement maps
-            nodata:
-              oneOf:
-                - const: -9999  # For depth agreement maps
-                - const: 255    # For extent agreement maps
-        - type: string
+              fim_type:
+                const: extent
+        - title: Depth Agreement Raster
+          description: Output for fim_type 'depth'. Represents agreement based on depth values (e.g., difference, ratio, classification).
+          type: string
           format: uri
-          contentMediaType: application/geopackage+sqlite3
+          contentMediaType: image/tiff; application=geotiff
           properties:
-            crs:
-              const: EPSG:5070
-            geometry_type:
-              type: string
-              enum: [Point, MultiPoint, Polygon, Multipolygon]
+            compression:
+              const: lzw
+            dtype:
+              const: float32
+            nodata:
+              const: -9999
+          when:
+            properties:
+              fim_type:
+                const: depth

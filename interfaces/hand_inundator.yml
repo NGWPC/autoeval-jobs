@@ -1,79 +1,47 @@
 id: hand_inundator
 description: Generates flood inundation extents using HAND methodology and NWM forecasts
 outputTransmission:
-  - reference
+  - reference 
+
 arguments:
-  geo_mem_cache:
-    title: Geocomputing Memory Cache
-    description: GDAL cache size in megabytes for optimized raster processing
-    schema:
-      type: integer
-      minimum: 64
-      maximum: 8192
-      default: 512
-  output_type:
-    title: Output Data Type
-    description: Choose between depth values or binary inundation extent
+  fim_type:
+    title: FIM Output Type
+    description: Choose between depth values or binary inundation extent for the output raster.
     schema:
       type: string
       enum: [extent, depth]
-      default: extent
+      default: extent 
+
 inputs:
-  catchment:
-    title: Catchment Metadata
-    description: JSON file containing catchment HydroID rating curves, metadata, and paths to the raster data required to inundate the catchment
+  catchment_data_path:
+    title: Catchment Metadata Path
+    description: Path/URI to a JSON file containing catchment HydroID rating curves, metadata, and paths to required raster data (HAND, Catchment).
+    required: true # Assuming this is always needed
     schema:
-      type: object
-      properties:
-        hydrotable_entries:
-          type: object
-          additionalProperties:
-            type: object
-            properties:
-              stage:
-                type: array
-                items:
-                  type: number
-              discharge_cms:
-                type: array
-                items:
-                  type: number
-              nwm_feature_id:
-                type: integer
-              lake_id:
-                type: integer
-            required: [stage, discharge_cms, nwm_feature_id]
-        raster_pair:
-          type: object
-          properties:
-            rem_raster_path:
-              type: string
-              format: uri
-              contentMediaType: image/tiff; application=geotiff
-            catchment_raster_path:
-              type: string
-              format: uri
-              contentMediaType: image/tiff; application=geotiff
-          required: [rem_raster_path, catchment_raster_path]
-      required: [hydrotable_entries, raster_pair]
-  flow_scenario:
-    title: Flow Scenario
-    description: CSV file with NWM discharge predictions
+      type: string
+      format: uri
+      contentMediaType: application/json
+
+  forecast_path:
+    title: Forecast Path
+    description: Path/URI to a CSV file with NWM discharge predictions (or other flow scenario data).
+    required: true 
     schema:
       type: string
       format: uri
       contentMediaType: text/csv
+
 outputs:
-  inundation_raster:
-    title: Inundation Map
-    description: Flood depth or extent raster in CONUS Albers (EPSG:5070)
+  fim_output_path:
+    title: FIM Output Path
+    description: Path for the generated Flood Inundation Map (depth or extent raster) in CONUS Albers (EPSG:5070).
     schema:
-      oneOf:
+      oneOf: # Output format depends on the 'fim_type' argument
         # Extent raster specification
         - type: string
-          format: uri
+          format: uri 
           contentMediaType: image/tiff; application=geotiff
-          properties:
+          properties: 
             compression: lzw
             dtype: uint8
             nodata: 255
@@ -81,19 +49,19 @@ outputs:
               const: EPSG:5070
           when:
             properties:
-              output_type:
+              fim_type: 
                 const: extent
         # Depth raster specification
         - type: string
-          format: uri
+          format: uri 
           contentMediaType: image/tiff; application=geotiff
-          properties:
+          properties: 
             compression: lzw
             dtype: float32
-            nodata: -9999
+            nodata: -9999 
             crs:
               const: EPSG:5070
           when:
             properties:
-              output_type:
+              fim_type: 
                 const: depth

@@ -1,0 +1,47 @@
+id: hwm_metrics
+description: Computes validation metrics from a vector agreement dataset (GeoPackage Points/MultiPoints) containing tagged points (e.g., High Water Marks) and saves them to a JSON file. Assumes points have attributes indicating agreement status or values derived from comparison with a benchmark raster.
+outputTransmission:
+  - value
+  - reference
+
+arguments:
+
+inputs:
+  agreement_path:
+    title: Vector Agreement Points Path
+    description: Path/URI to the input vector agreement dataset (GeoPackage with Points/MultiPoints) in. Must contain attributes indicating agreement status.
+    required: true
+    schema:
+      type: string
+      format: uri
+      contentMediaType: application/geopackage+gpkg
+      properties:
+        geometry_type:
+          type: string
+          enum: [Point, MultiPoint]
+        attributes: # Describe expected attributes - crucial for actual implementation
+          type: object
+          description: ""
+
+
+outputs:
+  metrics_path:
+    title: HWM Metrics Output Path
+    description: |
+      Path/URI where the calculated validation metrics for the points dataset will be saved as a JSON file.
+      The JSON file will contain an object with performance metrics derived from the point-based comparison, potentially including:
+      ```json
+      {
+        "points_total": <integer>,
+        "points_agree": <integer>,
+        "hit_rate": <number between 0 and 1>, // Equivalent to POD for points
+        "mean_absolute_error": <number>, // If comparing depth values
+        "rmse": <number> // If comparing depth values
+        // Other relevant point-based metrics
+      }
+      ```
+      (Note: Specific metrics like CSI/POD/FAR might be adapted or different metrics might be more suitable for point validation depending on the exact attributes available).
+    schema:
+      type: string
+      format: uri
+      contentMediaType: application/json
