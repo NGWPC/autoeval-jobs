@@ -8,7 +8,7 @@ By convention when outputs are listed for a job it is assumed that these outputs
 
 ## HAND Inundator (`hand_inundator`)
 
-**Implementation status:  partially implemented. Depth FIM production will be added in PI-6**
+**Implementation status: Inundated extents implemented. Depth FIM production will be added in FY26**
 
 ### Example docker run command
 
@@ -65,7 +65,7 @@ This example lists all possible arguments. See yaml files for optional vs requir
 
 ## Mosaic Maker (`fim_mosaicker`) 
 
-**Implementation status:  partially implemented. mosaicking for depth rasters will be added in PI-6**
+**Implementation status: Partially implemented. The depth FIM functionality will be implemented in FY26.**
 
 ### Example command
 
@@ -101,7 +101,7 @@ This job mosaics flood extents and benchmark raster data from either HAND or ben
 
 ## Agreement Maker (`agreement_maker`) 
 
-**Implementation status:  Will be implemented in NGWPC PI-6**
+**Implementation status:  Will be implemented in NGWPC PI-6. The depth FIM functionality will be implemented in FY26.**
 
 ### Example command
 
@@ -113,16 +113,16 @@ python agreement.py --benchmark_path /path/to/raster/ --candidate_path /path/to/
 
 This example lists all possible arguments. See yaml files for optional vs required arguments.
 
-**Note on implementation memory usage and the  argument:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation. If GVAL can't be made to limit its memory usage we will need to pursue a different approach.
+**Note on implementation memory usage:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation. If GVAL can't be made to limit its memory usage we will need to pursue a different approach.
 
 ### Description  
-Creates an agreement map showing where a pair of input rasters spatially concur. The job works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The output is in EPSG:5070. The resolution of the produced raster will be determined by the lowest resolution raster in the input data.
+Creates an agreement map showing where a pair of input rasters spatially concur. The job works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The resolution of the produced raster will be determined by the lowest resolution raster in the input data.
 
 
 ### Arguments  
 
 - **fim_type**
-  - Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values (requires specific logic in the script). Influences output raster format.
+  - Specifies whether agreement is based on spatial 'extent' (agreement between binary categorical rasters) or between rasters with depth values. Influences output raster format.
  
 ### Inputs
 - **benchmark_path**:  
@@ -165,13 +165,13 @@ Output is a single raster
 From inside the agreement-dev container would run:
 
 ```
-python agreement.py --benchmark_path /path/to/multipoint --candidate_path /path/to/multipoint --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent 
+python agreement.py --benchmark_path /path/to/multipoint --candidate_path /path/to/raster --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent 
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments.
 
 ### Description  
-Creates an agreement multipoint geometry showing where a FIM raster and a set of HWM points associated with an event spatially concur. The job works with depth or extent rasters with the assumption that a given HWM survey will the attributes required to produce an agreement map. The output is in EPSG:5070. The agreement geometry will be the same HWM point geometry with attributes indicating agreement between the HWM points and the raster being compared.
+Creates an agreement multipoint geometry showing where a FIM raster and a set of HWM points associated with an event spatially concur. The job works with depth or extent rasters with the assumption that a given HWM survey will the attributes required to produce an agreement map. The agreement geometry will be the same HWM point geometry with attributes indicating agreement between the HWM points and the raster being compared.
 
 ### Arguments  
 
