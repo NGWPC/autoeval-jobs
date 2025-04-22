@@ -11,10 +11,137 @@ import json
 import argparse
 from pathlib import Path
 import boto3
+import gc
 
 
 def is_s3_path(path: str) -> bool:
     return path.startswith("s3://")
+
+
+def get_raster_info(raster_paths: list[str], config_options: dict):
+    """
+    Get metadata from rasters without keeping them all open at once.
+    """
+    # Get info from first raster for basic metadata
+    with rasterio.Env(**config_options):
+        with rasterio.open(raster_paths[0]) as src:
+            profile = src.profile.copy()
+            crs = src.crs
+            res = src.res
+            first_bounds = src.bounds
+
+    # Get bounds from all rasters without keeping them open simultaneously
+    bounds_list = [first_bounds]
+    with rasterio.Env(**config_options):
+        for path in raster_paths[1:]:  # Skip the first one we already processed
+            with rasterio.open(path) as src:
+                # Verify CRS and resolution match
+                if src.crs != crs:
+                    raise ValueError(f"Raster {path} has different CRS than others")
+                if src.res != res:
+                    raise ValueError(
+                        f"Raster {path} has different resolution than others"
+                    )
+                bounds_list.append(src.bounds)
+
+    # Calculate overall bounds
+    left = min(bound.left for bound in bounds_list)
+    bottom = min(bound.bottom for bound in bounds_list)
+    right = max(bound.right for bound in bounds_list)
+    top = max(bound.top for bound in bounds_list)
+
+    # Calculate output dimensions
+    width = int((right - left) / res[0] + 0.5)
+    height = int((top - bottom) / res[1] + 0.5)
+
+    # Create output transform
+    transform = rasterio.transform.from_bounds(left, bottom, right, top, width, height)
+
+    return profile, crs, res, width, height, transform, bounds_list
+
+
+def process_window_for_source(
+    src, window, window_bounds, nodata, fim_type, profile, out_data=None
+):
+    """
+    Process a window for a single source raster.
+    Returns modified output data and a flag indicating if valid data was found.
+    """
+    # Initialize output if not provided
+    if out_data is None:
+        out_data = np.full(
+            (window.height, window.width), nodata, dtype=profile["dtype"]
+        )
+
+    has_valid_data = False
+
+    # Calculate the window in the source raster's coordinate system
+    src_window = src.window(*window_bounds)
+
+    # Check if the source overlaps this window
+    if src_window.width <= 0 or src_window.height <= 0:
+        return out_data, has_valid_data
+
+    try:
+        # Ensure the window is valid for reading
+        src_window = src_window.round_offsets().round_lengths()
+        data = src.read(
+            1,
+            window=src_window,
+            boundless=True,
+            fill_value=src.nodata,
+        )
+
+        if data is None or data.size == 0:
+            return out_data, has_valid_data
+
+        # Create mask of valid data (not nodata)
+        src_nodata = src.nodata if src.nodata is not None else None
+        valid_mask = (
+            np.ones_like(data, dtype=bool) if src_nodata is None else data != src_nodata
+        )
+
+        if not np.any(valid_mask):
+            return out_data, has_valid_data
+
+        if fim_type == "extent":
+            # For extent type, convert all non-zero values to 1
+            # But only for valid (not nodata) cells
+            data_valid = np.zeros_like(data, dtype=np.uint8)
+            np.place(data_valid, valid_mask & (data != 0), 1)
+            data = data_valid
+            del data_valid
+
+        # Update the output array - only where valid data exists
+        has_valid_data = True
+
+        # Create a mask for where out_data is nodata
+        out_nodata_mask = out_data == nodata
+
+        # Where both are valid, take max. Where only temp is valid, take temp.
+        # Where only out_data is valid, keep out_data
+        mask_both_valid = valid_mask & ~out_nodata_mask
+        mask_only_src_valid = valid_mask & out_nodata_mask
+
+        # Only process where needed
+        if np.any(mask_both_valid):
+            # Operate directly on out_data where possible
+            np.maximum(out_data, data, out=out_data, where=mask_both_valid)
+
+        if np.any(mask_only_src_valid):
+            out_data[mask_only_src_valid] = data[mask_only_src_valid]
+
+        # Clean up
+        del valid_mask, out_nodata_mask, mask_both_valid, mask_only_src_valid
+
+    except Exception as e:
+        print(f"Warning: Error reading window from source: {e}")
+
+    # Clean up
+    del data
+    gc.collect()
+
+    return out_data, has_valid_data
 
 
 def mosaic_rasters(
@@ -23,6 +150,7 @@ def mosaic_rasters(
     clip_geometry: Optional[Union[str, dict]] = None,
     fim_type: Literal["depth", "extent"] = "depth",
     geo_mem_cache: int = 256,  # Control GDAL cache size in MB
+    block_size: int = 256,  # Block size for processing
 ) -> str:
     """Raster mosaicking using rasterio with optimized memory settings.
 
@@ -41,6 +169,8 @@ def mosaic_rasters(
     geo_mem_cache : int, optional
         GDAL cache size in megabytes, by default 256 MB.
         Controls memory usage during raster processing.
+    block_size : int, optional
+        Size of blocks for processing, smaller values use less memory.
 
     Returns
     -------
@@ -68,92 +198,87 @@ def mosaic_rasters(
         nodata = 255
         dtype = "uint8"
 
-    # Enhanced GDAL environment settings for better performance and S3 support
+    # Convert S3 path format if needed
+    vsis3_output_path = output_path
+    if is_s3_path(output_path):
+        # Convert s3:// to /vsis3/ format for GDAL
+        bucket_and_key = output_path[5:]  # Remove 's3://'
+        vsis3_output_path = f"/vsis3/{bucket_and_key}"
+
+    # Set up AWS credentials in environment variables
+    session = boto3.Session(
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    )
+    creds = session.get_credentials()
+    if creds:
+        # Update environment variables with credentials
+        os.environ.update(
+            {
+                "AWS_ACCESS_KEY_ID": creds.access_key,
+                "AWS_SECRET_ACCESS_KEY": creds.secret_key,
+                **({"AWS_SESSION_TOKEN": creds.token} if creds.token else {}),
+            }
+        )
+
+    # Enhanced GDAL environment settings for better S3 writing support with memory optimization
     config_options = {
         "GDAL_CACHEMAX": geo_mem_cache,
-        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",  # Performance boost for S3/cloud storage
-        "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.vrt",  # Limit allowed extensions
-        "AWS_VIRTUAL_HOSTING": "TRUE",  # Enable virtual hosting style for S3
+        "VSI_CACHE_SIZE": 1024 * 1024 * min(128, geo_mem_cache),  # Smaller VSI cache
+        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+        "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.vrt",
+        "AWS_VIRTUAL_HOSTING": "TRUE",
         "VSI_CACHE": "TRUE",
+        "VSI_CACHE_SIZE": "25000000",  # Reduced cache size (25MB)
+        # Critical settings for S3 write operations
         "CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE": "YES",
-        "VSI_CACHE_SIZE": "50000000",  # 50MB cache
+        "VSI_TEMP_DIR": "/tmp",
+        "AWS_REQUEST_PAYER": "requester",  # If bucket is requester pays
+        "AWS_REGION": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
     }
 
-    # Use boto3 for AWS authentication instead of direct GDAL config
-    session = None
-    if is_s3_path(output_path) or any(is_s3_path(path) for path in raster_paths):
-        # Let boto3 handle credentials from environment variables or AWS config
-        session = boto3.Session()
-        # Verify we have credentials if needed
-        if session.get_credentials() is None:
-            print("Warning: No AWS credentials found. Using anonymous access.")
+    # Only create directories for local paths, not for S3
+    if not is_s3_path(output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    # Open all rasters and get their metadata
-    src_files = []
     try:
+        # Get metadata without keeping all rasters open
+        profile, crs, res, width, height, transform, bounds_list = get_raster_info(
+            raster_paths, config_options
+        )
+
+        # Update output profile
+        profile.update(
+            {
+                "driver": "GTiff",
+                "height": height,
+                "width": width,
+                "transform": transform,
+                "dtype": dtype,
+                "nodata": nodata,
+                "tiled": True,
+                "blockxsize": block_size,  # Smaller block size for less memory usage
+                "blockysize": block_size,
+                "compress": "lzw",
+                "predictor": 2,
+            }
+        )
+
+        print(
+            f"Writing output to: {output_path}"
+            + (" (using VSIS3)" if is_s3_path(output_path) else "")
+        )
+
+        # Create output raster - use vsis3 path for S3 writing
         with rasterio.Env(**config_options):
-            # Register boto3 session with GDAL if available
-            if session:
-                rasterio.env.ensure_env_with_credentials(session)
-
-            for path in raster_paths:
-                src = rasterio.open(path)
-                src_files.append(src)
-
-            # Check that all rasters have the same CRS
-            crs = src_files[0].crs
-            if not all(src.crs == crs for src in src_files):
-                raise ValueError("All rasters must have the same CRS")
-
-            # Get bounds of the mosaic
-            bounds = [src.bounds for src in src_files]
-            left = min(bound.left for bound in bounds)
-            bottom = min(bound.bottom for bound in bounds)
-            right = max(bound.right for bound in bounds)
-            top = max(bound.top for bound in bounds)
-
-            # Get resolution (assuming all rasters have same resolution)
-            res = src_files[0].res
-            if not all(src.res == res for src in src_files):
-                raise ValueError("All rasters must have the same resolution")
-
-            # Calculate output dimensions
-            width = int((right - left) / res[0] + 0.5)
-            height = int((top - bottom) / res[1] + 0.5)
-
-            # Create output profile
-            profile = src_files[0].profile.copy()
-            profile.update(
-                {
-                    "driver": "GTiff",
-                    "height": height,
-                    "width": width,
-                    "transform": rasterio.transform.from_bounds(
-                        left, bottom, right, top, width, height
-                    ),
-                    "dtype": dtype,
-                    "nodata": nodata,
-                    "tiled": True,
-                    "blockxsize": 256,  # Standard block size for efficient processing
-                    "blockysize": 256,
-                    "compress": "lzw",
-                    "predictor": 2,
-                }
-            )
-
-            # Only create directories for local paths, not for S3
-            if not is_s3_path(output_path):
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-            print(f"Writing output to: {output_path}")
-
-            # Create output raster
-            with rasterio.open(output_path, "w", **profile) as dst:
+            with rasterio.open(vsis3_output_path, "w", **profile) as dst:
                 # Get a list of all blocks for processing
                 windows = list(dst.block_windows(1))
 
                 # Process each window
                 for idx, (_, window) in enumerate(windows):
+                    if idx % 10 == 0:  # Status update every 10 windows
+                        print(f"Processing window {idx+1} of {len(windows)}")
+
                     # Create a transform for this particular window
                     window_transform = dst.window_transform(window)
 
@@ -162,111 +287,105 @@ def mosaic_rasters(
                         (window.height, window.width), nodata, dtype=profile["dtype"]
                     )
 
-                    # Track if we've found any valid data for this window
-                    has_valid_data = False
-
                     # Compute the window bounds in coordinate space
                     window_bounds = rasterio.transform.array_bounds(
                         window.height, window.width, window_transform
                     )
 
-                    # For each source raster, check if it overlaps with this window
-                    for src in src_files:
-                        # Calculate the window in the source raster's coordinate system
-                        src_window = src.window(*window_bounds)
+                    # Track if we've found any valid data for this window
+                    has_valid_data = False
 
-                        # Check if the source overlaps this window
-                        if src_window.width <= 0 or src_window.height <= 0:
-                            continue
-
-                        # Read data from the source raster
-                        try:
-                            # Ensure the window is valid for reading
-                            src_window = src_window.round_offsets().round_lengths()
-                            data = src.read(
-                                1,
-                                window=src_window,
-                                boundless=True,
-                                fill_value=src.nodata,
+                    # Process each source one at a time to reduce memory usage
+                    for path in raster_paths:
+                        with rasterio.open(path) as src:
+                            # Process this source for the current window
+                            out_data, src_has_valid = process_window_for_source(
+                                src,
+                                window,
+                                window_bounds,
+                                nodata,
+                                fim_type,
+                                profile,
+                                out_data,
                             )
 
-                            if data is None or data.size == 0:
-                                continue
-
-                            # Create mask of valid data (not nodata)
-                            src_nodata = src.nodata if src.nodata is not None else None
-                            valid_mask = (
-                                np.ones_like(data, dtype=bool)
-                                if src_nodata is None
-                                else data != src_nodata
-                            )
-
-                            if fim_type == "extent":
-                                # For extent type, convert all non-zero values to 1
-                                # But only for valid (not nodata) cells
-                                data_temp = np.zeros_like(data, dtype=np.uint8)
-                                # Set 1 where valid and non-zero
-                                data_temp[valid_mask & (data != 0)] = 1
-                                data = data_temp
-
-                            # Update the output array - only where valid data exists
-                            if np.any(valid_mask):
+                            if src_has_valid:
                                 has_valid_data = True
-                                # Only keep maximum values where mask is True
-                                temp = np.full_like(data, nodata)
-                                temp[valid_mask] = data[valid_mask]
-
-                                # Create a mask for where out_data is nodata
-                                out_nodata_mask = out_data == nodata
-
-                                # Where both are valid, take max. Where only temp is valid, take temp.
-                                # Where only out_data is valid, keep out_data
-                                mask_both_valid = valid_mask & ~out_nodata_mask
-                                mask_only_temp_valid = valid_mask & out_nodata_mask
-
-                                if np.any(mask_both_valid):
-                                    out_data[mask_both_valid] = np.maximum(
-                                        out_data[mask_both_valid], temp[mask_both_valid]
-                                    )
-                                if np.any(mask_only_temp_valid):
-                                    out_data[mask_only_temp_valid] = temp[
-                                        mask_only_temp_valid
-                                    ]
-
-                        except Exception as e:
-                            print(f"Warning: Error reading window from source: {e}")
-                            continue
 
                     # For extent type, ensure we only have 0, 1, or nodata in the output
                     if fim_type == "extent" and has_valid_data:
+                        # Operate directly on out_data
                         valid_mask = out_data != nodata
-                        out_data[valid_mask & (out_data > 0)] = 1
+                        np.place(out_data, valid_mask & (out_data > 0), 1)
+                        del valid_mask
 
                     # Write block to output
                     dst.write(out_data, window=window, indexes=1)
 
-            # Apply clipping if geometry provided
+                    # Clean up
+                    del out_data, window_transform, window_bounds
+                    gc.collect()
+
+                # Force GC after all windows
+                gc.collect()
+
+            # Handle clipping in a separate step to reduce memory pressure
             if clip_geometry is not None:
-                with rasterio.open(output_path, "r+") as src:
-                    if isinstance(clip_geometry, str):
-                        with fiona.open(clip_geometry, "r") as clip_file:
-                            geoms = [feature["geometry"] for feature in clip_file]
-                    else:
-                        geoms = (
-                            [clip_geometry]
-                            if isinstance(clip_geometry, dict)
-                            else clip_geometry
+                print("Applying clip geometry...")
+
+                # Read clip geometry only once
+                if isinstance(clip_geometry, str):
+                    with fiona.open(clip_geometry, "r") as clip_file:
+                        geoms = [feature["geometry"] for feature in clip_file]
+                else:
+                    geoms = (
+                        [clip_geometry]
+                        if isinstance(clip_geometry, dict)
+                        else clip_geometry
+                    )
+
+                # Process in blocks for clipping to reduce memory usage
+                with rasterio.open(vsis3_output_path, "r+") as src:
+                    for _, window in src.block_windows(1):
+                        # Read the block
+                        data = src.read(1, window=window)
+
+                        # Get the window transform
+                        window_transform = src.window_transform(window)
+
+                        # Create a mask for this window
+                        masked, _ = mask(
+                            rasterio.io.MemoryFile().open(
+                                driver="GTiff",
+                                height=window.height,
+                                width=window.width,
+                                count=1,
+                                dtype=src.dtypes[0],
+                                nodata=nodata,
+                                transform=window_transform,
+                            ),
+                            geoms,
+                            crop=False,
+                            nodata=nodata,
+                            all_touched=True,
                         )
 
-                    out_data, out_transform = mask(
-                        src, geoms, crop=False, nodata=nodata
-                    )
-                    src.write(out_data[0], indexes=1)
+                        # Apply the mask to the data
+                        data = masked[0]
 
-    finally:
-        # Close all source files
-        for src in src_files:
-            src.close()
+                        # Write back
+                        src.write(data, indexes=1, window=window)
+
+                        # Clean up
+                        del data, masked, window_transform
+                        gc.collect()
+
+    except Exception as e:
+        print(f"Error in mosaic operation: {e}")
+        raise
+
+    # Final cleanup
+    gc.collect()
 
     return output_path
 
@@ -335,6 +454,13 @@ if __name__ == "__main__":
         help="GDAL cache size in megabytes",
     )
 
+    parser.add_argument(
+        "--block-size",
+        type=int,
+        default=256,
+        help="Block size for processing (smaller = less memory usage)",
+    )
+
     args = parser.parse_args()
 
     # Check if raster_paths is a path to a JSON file
@@ -394,6 +520,7 @@ if __name__ == "__main__":
             clip_geometry=args.clip_geometry if args.clip_geometry else None,
             fim_type=args.fim_type,
             geo_mem_cache=args.geo_mem_cache,
+            block_size=args.block_size,
         )
         print(f"Successfully created mosaic: {output_raster}")
 
