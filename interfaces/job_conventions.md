@@ -1,5 +1,5 @@
 ## Input and outputs
-All data inputs and outputs from containers should be written to and read from files. IO should always use the python [smart_open library](https://pypi.org/project/smart-open/) 
+All data inputs and outputs from containers should be written to and read from files. All non-geospatial IO should always use the python [fsspec library](https://filesystem-spec.readthedocs.io/en/latest/) to read and write a jobs terminal inputs and outputs. For geospatial data, IO will sometimes use GDAL's drivers instead of fsspec to flexibly write to either local or cloud storage because many geospatial libraries can use these drivers when reading and writing to the cloud.
 
 ## Entrypoint script arguments
 
@@ -16,8 +16,7 @@ All log entries will be a single JSON object per line. The log entries should th
 
 * timestamp
 * level
-* tags
-  * job_id
+* job_id
 * message
 
 An example log entry might be:
@@ -26,17 +25,10 @@ An example log entry might be:
 {
   "timestamp": "2025-04-14T16:10:15.543210Z",
   "level": "INFO",
-  "tags": {
-    "job_id": "hand_inundator",
-    "other_context": "<value>"
-    },
+  "job_id": "hand_inundator",
   "message": "Began inundate job for branch 0",
 }
 ```
-
-### tags
-
-The tags key is a way that jobs can log additional context about a job run that could be useful for querying across job runs or across jobs. Its value is always a json object whose keys can only contain strings or integers. That is there shouldn't be any further nested objects or lists inside the tags objects. 
 
 ### Log levels
 
@@ -57,10 +49,6 @@ When a job runs successfully then the last message should look like this:
   "timestamp": "2025-04-14T16:10:15.543210Z",
   "level": "SUCCESS",
   "job_id": "hand_inundator",
-  "tags": {
-    "job_id": "hand_inundator",
-    "other_context": "<value>"
-    },
   "message": {
     "output_type1": "s3://fimc-data/path/to/filetype1",
     "output_type2": "s3://fimc-data/path/to/file2"
@@ -79,10 +67,6 @@ If an error message is logged, **it should always be the last message logged by 
   "timestamp": "2025-04-14T16:10:15.543210Z",
   "level": "ERROR",
   "job_id": "hand_inundator",
-  "tags": {
-    "job_id": "hand_inundator",
-    "other_context": "<value>"
-    },
   "message": "Inundate job run failed: {fatal error message here}",
 }
 ```
