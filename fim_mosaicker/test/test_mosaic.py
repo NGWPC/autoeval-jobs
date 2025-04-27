@@ -6,7 +6,7 @@ import rasterio
 import numpy as np
 import sys
 from pathlib import Path
-
+import json  # <<< Add this import
 
 # --- Define project structure relative to this test file ---
 TEST_DIR = Path(__file__).parent.resolve()
@@ -34,6 +34,8 @@ class TestMosaicScript(unittest.TestCase):
             cls.mock_data_dir / "raster3.tif",
             cls.mock_data_dir / "raster4.tif",
         ]
+        # Convert paths to strings for JSON serialization
+        cls.raster_paths_str_list = [str(p) for p in cls.raster_paths]
 
         # Output path using pathlib
         cls.output_path = cls.mock_data_dir / "mosaicked_raster.tif"
@@ -62,11 +64,17 @@ class TestMosaicScript(unittest.TestCase):
             self.output_path.unlink()
 
         # --- Prepare command arguments adhering to new script interface ---
+        # Convert the list of path strings into a single JSON string
+        raster_paths_json_str = json.dumps(
+            self.raster_paths_str_list
+        )  # <<< Convert list to JSON string
+
         cmd = [
             sys.executable,  # Use the current Python interpreter
             str(self.script_path),
             "--raster-paths",
-            *[str(p) for p in self.raster_paths],  # Pass paths as strings
+            raster_paths_json_str,  # <<< Pass the single JSON string here
+            # *[str(p) for p in self.raster_paths], # <<< REMOVE THIS - old way
             "--mosaic-output-path",
             str(self.output_path),
             "--fim-type",
@@ -80,7 +88,9 @@ class TestMosaicScript(unittest.TestCase):
         # Set log level if needed for debugging test failures
         # test_env['LOG_LEVEL'] = 'DEBUG'
 
-        print(f"\nRunning command: {' '.join(cmd)}")
+        print(
+            f"\nRunning command: {' '.join(cmd)}"
+        )  # Note: JSON string might make this long/hard to read
         print(f"With Environment: GDAL_CACHEMAX={test_env['GDAL_CACHEMAX']}")
 
         # Run with full output capture
@@ -90,6 +100,7 @@ class TestMosaicScript(unittest.TestCase):
         print(f"STDOUT:\n{result.stdout}")
         print(f"STDERR:\n{result.stderr}")  # This will contain JSON logs
 
+        # Check return code first
         self.assertEqual(
             result.returncode,
             0,
@@ -102,7 +113,7 @@ class TestMosaicScript(unittest.TestCase):
             f"Mosaic output file was not created at {self.output_path}",
         )
 
-        # Verify the output raster properties
+        # Verify the output raster properties (No changes needed here)
         try:
             with rasterio.open(self.output_path) as src:
                 # Check data type (uint8 for extent)
@@ -147,8 +158,13 @@ class TestMosaicScript(unittest.TestCase):
             self.fail(
                 f"Failed to open or read the output raster file: {self.output_path}. Error: {e}"
             )
+        # Optionally cleanup the created mosaic file if desired after test
+        # finally:
+        #     if self.output_path.exists():
+        #         self.output_path.unlink()
 
     # Add more tests here (e.g., test_mosaic_creation_depth, test_clipping, test_missing_input)
+    # Consider adding a test that uses a temporary file for the JSON input
 
 
 if __name__ == "__main__":
