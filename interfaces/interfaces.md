@@ -85,8 +85,8 @@ This job mosaics flood extents and benchmark raster data from either HAND or ben
   - This informs the job whether it is mosaicking FIMs with extents or depths.
 
 ### Inputs
-- **raster_paths** and/or **hwm_paths**: 
-  - Array of paths to TIFF/GeoJSON/GeoPackage rasters and/or vector files. If a vector is listed in the array then the output will be a vector. 
+- **raster_paths** 
+  - An array of paths to rasters in tiff format. The array should be a string formatted as a json list. This input can also be a file with the stringified json list inside it. 
 - **clip_geometry_path**
   - Optional path to a GeoJSON or gpkg file with a boundary to clip the mosaicked output to. This input will always be given in the HAND FIM evaluation pipeline and will describe the ROI being evaluated.
 

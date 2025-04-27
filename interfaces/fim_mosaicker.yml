@@ -16,15 +16,20 @@ arguments:
 inputs:
   raster_paths:
     title: Input Raster Paths
-    description: Array of paths/URIs to input raster flood observations (e.g., GeoTIFFs).
+    description: >
+      Either a JSON array of GeoTIFF URIs, or a single path/URI to a
+      JSON file that contains such an array.
     required: true
     schema:
-      type: array
-      items:
-        type: string
-        format: uri
-        contentMediaType: image/tiff; application=geotiff
-      minItems: 1 
+      oneOf:
+        - type: array
+          items:
+            type: string
+            format: uri
+            contentMediaType: image/tiff; application=geotiff
+          minItems: 1
+        - type: string
+          description: "Filesystem or cloud path to a JSON file with the array"
 
   clip_geometry_path:
     title: Clipping Geometry Path
