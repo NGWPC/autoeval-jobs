@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import pdb
 import os
 import sys
 import argparse
@@ -9,21 +10,43 @@ import logging
 
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Sequence
+from typing import List, Tuple
 
 import numpy as np
-from osgeo import gdal, gdal_array, osr, ogr
+from osgeo import gdal, gdal_array
 from osgeo_utils.auxiliary import extent_util
 from osgeo_utils.auxiliary.base import PathLikeOrStr
 from osgeo_utils.auxiliary.extent_util import Extent, GeoTransform
 from osgeo_utils.auxiliary.rectangle import GeoRectangle
 from osgeo_utils.auxiliary.util import open_ds
 from pythonjsonlogger import jsonlogger
-import fiona
 
-# Enable GDAL exceptions
+
+# -----------------------------------------------------------------------------
+# GLOBAL GDAL / AWS S3 CONFIGURATION
+# -----------------------------------------------------------------------------
+# 1) Pick up credentials from ENV or IAM role
+gdal.SetConfigOption("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
+gdal.SetConfigOption("AWS_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY"))
+gdal.SetConfigOption("AWS_SESSION_TOKEN", os.getenv("AWS_SESSION_TOKEN"))
+gdal.SetConfigOption("AWS_REGION", os.getenv("AWS_REGION", "us-east-1"))
+# 2) Disable a full bucket listing on open (speeds up opening single objects)
+gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES")
+
+# Enable GDAL exceptions + error logging
 gdal.UseExceptions()
 gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
+
+
+def to_vsi(path: str) -> str:
+    """
+    Turn an s3://bucket/key URI into GDAL's VSI path /vsis3/bucket/key.
+    Leaves any other path unchanged.
+    """
+    if path.lower().startswith("s3://"):
+        bucket_key = path[5:]
+        return f"/vsis3/{bucket_key}"
+    return path
 
 
 def setup_logger(name="fim_mosaicker") -> logging.Logger:
@@ -61,10 +84,13 @@ class RasterInfo:
 
 
 def load_rasters(paths: List[str], log: logging.Logger) -> List[RasterInfo]:
-    """Open rasters, skip invalid ones, collect GT/proj/dims."""
+    """
+    Open rasters (local or S3), skip invalid ones, collect GT/proj/dims.
+    """
     records: List[RasterInfo] = []
     for p in paths:
-        ds = open_ds(p, access_mode=gdal.OF_RASTER | gdal.OF_VERBOSE_ERROR)
+        vst = to_vsi(p)
+        ds = open_ds(vst, access_mode=gdal.OF_RASTER | gdal.OF_VERBOSE_ERROR)
         if not ds:
             log.warning(f"Could not open {p}")
             continue
@@ -95,13 +121,13 @@ def pick_target_grid(
 ) -> Tuple[GeoTransform, Tuple[int, int], str]:
     """
     Choose the lowest‐resolution raster as reference (largest pixel area),
-    compute the union extent, and return the final GT, dims, and CRS WKT.
+    compute the union extent, and return GT, dims, and CRS WKT.
     """
-    # Pick the one with largest pixel area
+    # 1) Pick the one with largest pixel area
     ref = max(srcs, key=lambda r: abs(r.gt[1]) * abs(r.gt[5]))
     log.info(f"Reference: {ref.path} (@ res {ref.gt[1]}, {ref.gt[5]})")
 
-    # Build union extent rectangle
+    # 2) Build union extent rectangle
     gts = [r.gt for r in srcs]
     dims_list = [r.dims for r in srcs]
     _, _, rect = extent_util.calc_geotransform_and_dimensions(
@@ -110,7 +136,7 @@ def pick_target_grid(
     if not isinstance(rect, GeoRectangle):
         raise RuntimeError("Invalid union extent")
 
-    # Compute final grid dims
+    # 3) Compute final grid dims aligned to ref resolution
     rx, ry = abs(ref.gt[1]), abs(ref.gt[5])
     tx = int(np.ceil((rect.max_x - rect.min_x) / rx))
     ty = int(np.ceil((rect.max_y - rect.min_y) / ry))
@@ -134,15 +160,18 @@ def build_vrts(
     tmpdir = tempfile.mkdtemp(prefix="vrt_")
     aligned: List[gdal.Dataset] = []
     for r in srcs:
-        same = np.allclose(r.gt, gt, atol=1e-6) and r.dims == dims and r.proj == crs_wkt
-        if same:
+        same_grid = (
+            np.allclose(r.gt, gt, atol=1e-6) and r.dims == dims and r.proj == crs_wkt
+        )
+        if same_grid:
             aligned.append(r.ds)
         else:
-            vrt_path = os.path.join(tmpdir, Path(r.path).stem + "_aligned.vrt")
+            vrt_fn = Path(r.path).stem + "_aligned.vrt"
+            vrt_path = os.path.join(tmpdir, vrt_fn)
             log.info(f"Warp→VRT: {r.path}")
             gdal.Warp(
                 vrt_path,
-                r.ds,
+                to_vsi(r.path),
                 options=gdal.WarpOptions(
                     format="VRT",
                     outputBounds=(
@@ -167,15 +196,17 @@ def mosaic_blocks(
     outpath: str,
     gt: GeoTransform,
     dims: Tuple[int, int],
-    crs_wkt: str,  # <- Accept the CRS here
+    crs_wkt: str,
     dtype: int,
     nodata,
     log: logging.Logger,
 ) -> gdal.Dataset:
-    """Windowed NAN‐MAX mosaic into a tiled COG; returns the GDAL Dataset."""
+    """
+    Windowed NAN‐MAX mosaic into a tiled COG; returns the GDAL Dataset.
+    """
     drv = gdal.GetDriverByName("GTiff")
     ds = drv.Create(
-        outpath,
+        to_vsi(outpath),
         dims[0],
         dims[1],
         1,
@@ -190,16 +221,17 @@ def mosaic_blocks(
         ],
     )
     ds.SetGeoTransform(gt)
-    ds.SetProjection(crs_wkt)  # <- Use the passed crs_wkt
+    ds.SetProjection(crs_wkt)
     band = ds.GetRasterBand(1)
     band.SetNoDataValue(nodata)
 
     bx, by = band.GetBlockSize()
-    total = ((dims[0] + bx - 1) // bx) * ((dims[1] + by - 1) // by)
-    count = 0
+    total_blocks = ((dims[0] + bx - 1) // bx) * ((dims[1] + by - 1) // by)
+    block_count = 0
+
     for y in range(0, dims[1], by):
         for x in range(0, dims[0], bx):
-            count += 1
+            block_count += 1
             h = min(by, dims[1] - y)
             w = min(bx, dims[0] - x)
             acc = np.full((h, w), np.nan, np.float64)
@@ -210,13 +242,14 @@ def mosaic_blocks(
                     src_ds.GetRasterBand(1), xoff=x, yoff=y, win_xsize=w, win_ysize=h
                 ).astype(np.float64)
                 nd = src_ds.GetRasterBand(1).GetNoDataValue()
-                valid = ~np.isnan(arr) if np.isnan(nd) else (arr != nd)
+                valid = (~np.isnan(arr)) if np.isnan(nd) else (arr != nd)
                 if not valid.any():
                     continue
                 arr[~valid] = np.nan
                 acc = np.fmax(acc, arr)
                 mask_any |= valid
 
+            # prepare output block
             out_arr = np.full(
                 (h, w), nodata, np.uint8 if dtype == gdal.GDT_Byte else np.float32
             )
@@ -224,8 +257,8 @@ def mosaic_blocks(
             out_arr[ok] = acc[ok].astype(out_arr.dtype)
             gdal_array.BandWriteArray(band, out_arr, xoff=x, yoff=y)
 
-            if count % 100 == 0:
-                log.debug(f"Block {count}/{total}")
+            if block_count % 100 == 0:
+                log.debug(f"Block {block_count}/{total_blocks}")
 
     ds.FlushCache()
     return ds
@@ -258,7 +291,7 @@ def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
         src,
         options=gdal.WarpOptions(
             format="GTiff",
-            cutlineDSName=clip_path,
+            cutlineDSName=to_vsi(clip_path),
             cutlineLayer="",
             cropToCutline=False,
             dstNodata=nodata,
@@ -271,6 +304,7 @@ def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
 
 def main():
     log = setup_logger()
+
     p = argparse.ArgumentParser()
     p.add_argument(
         "--raster_paths",
@@ -279,18 +313,26 @@ def main():
     )
     p.add_argument("--mosaic_output_path", required=True)
     p.add_argument("--clip_geometry_path", default=None)
-    p.add_argument("--fim_type", choices=["depth", "extent"], default="extent")
+    p.add_argument(
+        "--fim_type",
+        choices=["depth", "extent"],
+        default="extent",
+        help="‘extent’→byte, 255 nodata; ‘depth’→float32",
+    )
     args = p.parse_args()
 
-    # parse input
+    # Load input paths (either direct JSON string or file on disk)
     txt = args.raster_paths
-    paths = json.load(open(txt)) if os.path.isfile(txt) else json.loads(txt)
+    if os.path.isfile(txt):
+        paths = json.load(open(txt))
+    else:
+        paths = json.loads(txt)
     rasters = load_rasters([str(p) for p in paths], log)
-
     gt, dims, crs = pick_target_grid(rasters, log)
-    aligned, tmpdir = build_vrts(rasters, gt, dims, crs, log)
 
-    # choose dtype & nodata
+    aligned_ds, tmpdir = build_vrts(rasters, gt, dims, crs, log)
+
+    # Pick output dtype/nodata
     if args.fim_type == "extent":
         dtype = gdal.GDT_Byte
         nodata = 255
@@ -298,27 +340,20 @@ def main():
         dtype = gdal.GDT_Float32
         nodata = -3.4028235e38
 
-    # mosaic + overviews
+    # Mosaic + write COG
     out_ds = mosaic_blocks(
-        aligned,
-        args.mosaic_output_path,
-        gt,
-        dims,
-        crs_wkt=crs,
-        dtype=dtype,
-        nodata=nodata,
-        log=log,
+        aligned_ds, args.mosaic_output_path, gt, dims, crs, dtype, nodata, log
     )
     build_overviews(out_ds, log)
 
-    # optional clipping
+    # Optional clipping to vector geometry
     if args.clip_geometry_path:
-        clip_output(args.mosaic_output_path, str(args.clip_geometry_path), nodata, log)
+        clip_output(args.mosaic_output_path, args.clip_geometry_path, nodata, log)
 
-    # cleanup
+    # Cleanup
     for r in rasters:
         r.ds = None
-    for ds in aligned:
+    for ds in aligned_ds:
         ds = None
     shutil.rmtree(tmpdir, ignore_errors=True)
 
