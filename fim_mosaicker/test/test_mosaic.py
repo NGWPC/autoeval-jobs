@@ -72,12 +72,11 @@ class TestMosaicScript(unittest.TestCase):
         cmd = [
             sys.executable,  # Use the current Python interpreter
             str(self.script_path),
-            "--raster-paths",
+            "--raster_paths",
             raster_paths_json_str,  # <<< Pass the single JSON string here
-            # *[str(p) for p in self.raster_paths], # <<< REMOVE THIS - old way
-            "--mosaic-output-path",
+            "--mosaic_output_path",
             str(self.output_path),
-            "--fim-type",
+            "--fim_type",
             "extent",
         ]
 
