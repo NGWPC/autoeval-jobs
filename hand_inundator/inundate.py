@@ -179,13 +179,7 @@ def inundate(
         s3_path = output_path[5:]
         bucket, _, key = s3_path.partition("/")
 
-        # Configure S3 client for better transfer performance
-        s3_client = boto3.client(
-            "s3",
-            config=boto3.config.Config(
-                max_pool_connections=4, retries={"max_attempts": 3}
-            ),
-        )
+        s3_client = boto3.client("s3")
 
         s3_client.upload_file(
             temp_output,
