@@ -30,9 +30,9 @@ gdal.SetConfigOption("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
 gdal.SetConfigOption("AWS_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY"))
 gdal.SetConfigOption("AWS_SESSION_TOKEN", os.getenv("AWS_SESSION_TOKEN"))
 gdal.SetConfigOption("AWS_REGION", os.getenv("AWS_REGION", "us-east-1"))
+gdal.SetConfigOption("CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE", "YES")
 # 2) Disable a full bucket listing on open (speeds up opening single objects)
 gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES")
-
 # Enable GDAL exceptions + error logging
 gdal.UseExceptions()
 gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
