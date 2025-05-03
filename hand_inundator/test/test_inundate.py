@@ -19,9 +19,7 @@ class TestInundateScript(unittest.TestCase):
 
         # Input paths
         cls.catchment_json = os.path.join(cls.mock_data_dir, "test_catchment.json")
-        cls.forecast_path = (
-            "s3://fimc-data/benchmark/ripple/nwm_return_period_flows_10_yr_cms.csv"
-        )
+        cls.forecast_path = "s3://fimc-data/benchmark/ripple_fim_30/nwm_return_period_flows_10_yr_cms.csv"
         cls.expected_output = os.path.join(
             cls.mock_data_dir, "inundate_test_extent_output.tif"
         )
