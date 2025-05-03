@@ -23,15 +23,16 @@ services:
     env_file:
       - .env
 
+
   make-agreement-dev:
     build: .
     entrypoint: [ sleep, infinity ]
     volumes:
       - ./agreement_maker:/app
+      - ~/.aws:/root/.aws:ro
+      - ./agreement_maker/test:/test
     environment:
-      - AWS_ACCESS_KEY_ID
-      - AWS_SECRET_ACCESS_KEY
-      - AWS_SESSION_TOKEN
+      - AWS_PROFILE=${AWS_PROFILE}
     env_file:
       - .env
 
@@ -41,8 +42,6 @@ services:
     volumes:
       - ./metrics_calculator:/app
     environment:
-      - AWS_ACCESS_KEY_ID
-      - AWS_SECRET_ACCESS_KEY
-      - AWS_SESSION_TOKEN
+      - AWS_PROFILE=${AWS_PROFILE}
     env_file:
       - .env

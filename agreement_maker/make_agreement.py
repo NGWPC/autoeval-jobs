@@ -92,8 +92,8 @@ def load_rasters(
     # Restore spatial attributes
     candidate_remapped = candidate_remapped.rio.write_crs(candidate.rio.crs)
     candidate_remapped.rio.write_transform(candidate.rio.transform(), inplace=True)
-    candidate_remapped.rio.write_nodata(-9999, inplace=True)
-    benchmark_remapped = benchmark_remapped.rio.write_nodata(-9999)
+    candidate_remapped.rio.write_nodata(255, inplace=True)
+    benchmark_remapped = benchmark_remapped.rio.write_nodata(255)
 
     return candidate_remapped, benchmark_remapped
 
@@ -132,7 +132,7 @@ def write_agreement_map(
         "tiled": True,
         "blockxsize": 8192,
         "blockysize": 8192,
-        "nodata": -9999,
+        "nodata": 255,
     }
 
     tasks = []
@@ -212,6 +212,12 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+# Sample usage S3 write
+# python agreement_maker/make_agreement.py --candidate_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif --benchmark_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif --output_path s3://fimc-data/autoeval/test_data/agreement/outputs/huc_11090202/huc_11090202_agreement_brad.tif
+
+# Sample usage local write
+# python agreement_maker/make_agreement.py --candidate_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif --benchmark_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif --output /test/mock_data/huc_11090202_agreement_brad.tif
 
 
 # - Sample Inputs S3 - #
