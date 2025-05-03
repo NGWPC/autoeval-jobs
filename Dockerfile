@@ -30,5 +30,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt && \
 # Copy jobs into deploy directory so nomad clients can run them
 COPY fim_mosaicker /deploy/fim_mosaicker
 COPY hand_inundator /deploy/hand_inundator
+COPY agreement_maker /deploy/agreement_maker
+COPY metrics_calculator /deploy/metrics_calculator
 
 
