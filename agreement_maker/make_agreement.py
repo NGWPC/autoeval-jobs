@@ -211,3 +211,22 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+# - Sample Inputs S3 - #
+
+# Benchmark Raster
+# s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif
+
+# Candidate Raster (HAND-derived)
+# s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif
+
+
+# - Sample Inputs Local - #
+
+# Benchmark Raster
+# /efs/fim-data/hand_fim/temp/autoeval/formatted_ble_huc_11090202_cog.tif
+
+# Candidate Raster (HAND-derived)
+#/efs/fim-data/hand_fim/temp/autoeval/formatted_hand_huc_11090202_cog.tif
