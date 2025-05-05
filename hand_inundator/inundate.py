@@ -135,9 +135,8 @@ def inundate(
 
     # 7) Move or upload result
     if output_path.startswith("s3://"):
-        # strip "s3://"
-        _, _, key = output_path[5:].partition("/")
-        bucket = output_path[5 : 5 + len(key) + 1 - len(key)]
+        path_no_scheme = output_path[len("s3://") :]
+        bucket, key = path_no_scheme.split("/", 1)
         boto3.client("s3").upload_file(tmp_tif, bucket, key)
     else:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
