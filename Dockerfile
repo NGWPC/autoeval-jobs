@@ -1,9 +1,6 @@
 # Base image 
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.2
 
-# Create and set working directory for deployable code
-WORKDIR /deploy
-
 # Copy requirements file
 COPY requirements.txt ./
 
@@ -31,4 +28,4 @@ RUN pip3 install --no-cache-dir -r requirements.txt && \
 COPY fim_mosaicker /deploy/fim_mosaicker
 COPY hand_inundator /deploy/hand_inundator
 
-
+WORKDIR /app
