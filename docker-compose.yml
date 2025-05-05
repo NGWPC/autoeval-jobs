@@ -23,7 +23,6 @@ services:
     env_file:
       - .env
 
-
   make-agreement-dev:
     build: .
     entrypoint: [ sleep, infinity ]
@@ -41,6 +40,10 @@ services:
     entrypoint: [ sleep, infinity ]
     volumes:
       - ./metrics_calculator:/app
+      - ~/.aws:/root/.aws:ro
+      - ./agreement_maker/test:/test
+      - ./metrics_calculator/test:/test_metrics
+      - ./agreement_maker:/app # Mount agreement_maker to access agreement_calculator
     environment:
       - AWS_PROFILE=${AWS_PROFILE}
     env_file:

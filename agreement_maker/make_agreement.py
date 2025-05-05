@@ -29,7 +29,7 @@ gdal.UseExceptions()
 gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
 
 
-def setup_logger(name="raster_comparator") -> logging.Logger:
+def setup_logger(name="make_agreement") -> logging.Logger:
     """Return a JSON-formatter logger with timestamp+level fields."""
     log = logging.getLogger(name)
     if log.handlers:
