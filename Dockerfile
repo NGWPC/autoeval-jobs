@@ -1,9 +1,6 @@
 # Base image 
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.2
 
-# Create and set working directory for deployable code
-WORKDIR /deploy
-
 # Copy requirements file
 COPY requirements.txt ./
 
@@ -33,4 +30,4 @@ COPY hand_inundator /deploy/hand_inundator
 COPY metrics_calculator /deploy/calculate_metrics  
 COPY agreement_maker /deploy/make_agreement
 
-
+WORKDIR /app

@@ -3,6 +3,7 @@ import pdb
 import os
 import sys
 import argparse
+import gc
 import tempfile
 import shutil
 import json
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 import numpy as np
+import fsspec
 from osgeo import gdal, gdal_array
 from osgeo_utils.auxiliary import extent_util
 from osgeo_utils.auxiliary.base import PathLikeOrStr
@@ -21,17 +23,13 @@ from osgeo_utils.auxiliary.rectangle import GeoRectangle
 from osgeo_utils.auxiliary.util import open_ds
 from pythonjsonlogger import jsonlogger
 
-
-# -----------------------------------------------------------------------------
-# GLOBAL GDAL / AWS S3 CONFIGURATION
-# -----------------------------------------------------------------------------
+# GDAL / AWS S3 CONFIGURATION
 # 1) Pick up credentials from ENV or IAM role
 gdal.SetConfigOption("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
 gdal.SetConfigOption("AWS_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY"))
 gdal.SetConfigOption("AWS_SESSION_TOKEN", os.getenv("AWS_SESSION_TOKEN"))
 gdal.SetConfigOption("AWS_REGION", os.getenv("AWS_REGION", "us-east-1"))
 gdal.SetConfigOption("CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE", "YES")
-# 2) Disable a full bucket listing on open (speeds up opening single objects)
 gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES")
 # Enable GDAL exceptions + error logging
 gdal.UseExceptions()
@@ -73,7 +71,7 @@ def setup_logger(name="fim_mosaicker") -> logging.Logger:
 
 @dataclass
 class RasterInfo:
-    """Minimal metadata for one input raster."""
+    """Metadata for one input raster."""
 
     path: str
     ds: gdal.Dataset
@@ -123,11 +121,11 @@ def pick_target_grid(
     Choose the lowest‐resolution raster as reference (largest pixel area),
     compute the union extent, and return GT, dims, and CRS WKT.
     """
-    # 1) Pick the one with largest pixel area
+    # Pick raster with largest pixel area
     ref = max(srcs, key=lambda r: abs(r.gt[1]) * abs(r.gt[5]))
     log.info(f"Reference: {ref.path} (@ res {ref.gt[1]}, {ref.gt[5]})")
 
-    # 2) Build union extent rectangle
+    # Build union extent rectangle
     gts = [r.gt for r in srcs]
     dims_list = [r.dims for r in srcs]
     _, _, rect = extent_util.calc_geotransform_and_dimensions(
@@ -136,7 +134,7 @@ def pick_target_grid(
     if not isinstance(rect, GeoRectangle):
         raise RuntimeError("Invalid union extent")
 
-    # 3) Compute final grid dims aligned to ref resolution
+    # Compute final grid dims aligned to ref resolution
     rx, ry = abs(ref.gt[1]), abs(ref.gt[5])
     tx = int(np.ceil((rect.max_x - rect.min_x) / rx))
     ty = int(np.ceil((rect.max_y - rect.min_y) / ry))
@@ -321,12 +319,13 @@ def main():
     )
     args = p.parse_args()
 
-    # Load input paths (either direct JSON string or file on disk)
+    # Load input paths (either JSON text or JSON file)
     txt = args.raster_paths
     if os.path.isfile(txt):
         paths = json.load(open(txt))
     else:
         paths = json.loads(txt)
+
     rasters = load_rasters([str(p) for p in paths], log)
     gt, dims, crs = pick_target_grid(rasters, log)
 
@@ -340,15 +339,27 @@ def main():
         dtype = gdal.GDT_Float32
         nodata = -3.4028235e38
 
-    # Mosaic + write COG
-    out_ds = mosaic_blocks(
-        aligned_ds, args.mosaic_output_path, gt, dims, crs, dtype, nodata, log
-    )
+    # Create a local temp file for the mosaic
+    tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
+
+    # Mosaic into that temp COG
+    out_ds = mosaic_blocks(aligned_ds, tmp_out, gt, dims, crs, dtype, nodata, log)
     build_overviews(out_ds, log)
+    out_ds.FlushCache()
+    del out_ds
+    gc.collect()
 
     # Optional clipping to vector geometry
     if args.clip_geometry_path:
-        clip_output(args.mosaic_output_path, args.clip_geometry_path, nodata, log)
+        clip_output(tmp_out, args.clip_geometry_path, nodata, log)
+        gc.collect()
+
+    # Push the temp COG to the final URI via fsspec (doing it this way to avoid delete object errors with IAM permissions on Test Nomad)
+    final = args.mosaic_output_path
+    log.info(f"Pushing temp COG → {final}")
+    with open(tmp_out, "rb") as ifp, fsspec.open(final, "wb") as ofp:
+        shutil.copyfileobj(ifp, ofp)
+    os.remove(tmp_out)
 
     # Cleanup
     for r in rasters:
