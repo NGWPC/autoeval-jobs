@@ -28,10 +28,11 @@ services:
     entrypoint: [ sleep, infinity ]
     volumes:
       - ./agreement_maker:/app
-      - ~/.aws:/root/.aws:ro
       - ./agreement_maker/test:/test
     environment:
-      - AWS_PROFILE=${AWS_PROFILE}
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
     env_file:
       - .env
 
@@ -40,11 +41,10 @@ services:
     entrypoint: [ sleep, infinity ]
     volumes:
       - ./metrics_calculator:/app
-      - ~/.aws:/root/.aws:ro
-      - ./agreement_maker/test:/test
-      - ./metrics_calculator/test:/test_metrics
-      - ./agreement_maker:/app # Mount agreement_maker to access agreement_calculator
+      - ./metrics_calculator/test:/test
     environment:
-      - AWS_PROFILE=${AWS_PROFILE}
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
     env_file:
       - .env

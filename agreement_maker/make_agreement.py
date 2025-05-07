@@ -99,7 +99,7 @@ def load_rasters(
 
 
 def compute_agreement_map(
-    candidate: xr.DataArray, benchmark: xr.DataArray, log: logging.Logger
+    candidate: xr.DataArray, benchmark: xr.DataArray, crosstab_path: str, metrics_table: str, log: logging.Logger
 ) -> xr.DataArray:
     """Compute the agreement map between candidate and benchmark rasters."""
     log.info("Homogenizing rasters")
@@ -109,6 +109,18 @@ def compute_agreement_map(
     agreement_map = candidate_homog.gval.compute_agreement_map(
         benchmark_map=benchmark_homog
     )
+
+    log.info("Computing crosstab_table and writing")
+    crosstab_table = agreement_map.gval.compute_crosstab()
+    crosstab_table.to_csv(crosstab_path)
+
+    # compute metrics
+    log.info("Computing metrics and writing")
+    metric_table_select = crosstab_table.gval.compute_categorical_metrics(
+                negative_categories=[0, 1], positive_categories=[2]
+            )
+    metric_table_select.to_csv(metrics_table)
+
     return agreement_map
 
 
@@ -178,7 +190,19 @@ def main():
         required=True,
         help="Path for output agreement map (local or S3)",
     )
+    parser.add_argument(
+        "--crosstab_path",
+        required=True,
+        help="Path for output crosstab table (local or S3)",
+    )
+    parser.add_argument(
+        "--metrics_path",
+        required=True,
+        help="Path for output metrics table (local or S3)",
+    )
+
     args = parser.parse_args()
+    print(args)
 
     # Set up Dask cluster
     client, cluster = setup_dask_cluster(log)
@@ -190,7 +214,7 @@ def main():
         )
 
         # Compute agreement map
-        agreement_map = compute_agreement_map(candidate, benchmark, log)
+        agreement_map = compute_agreement_map(candidate, benchmark, args.crosstab_path, args.metrics_path, log)
 
         # Write agreement map to GeoTIFF
         with rasterio.Env(
@@ -212,16 +236,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-# Sample usage S3 write
-# python agreement_maker/make_agreement.py --candidate_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif --benchmark_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif --output_path s3://fimc-data/autoeval/test_data/agreement/outputs/huc_11090202/huc_11090202_agreement_brad.tif
-
-# Sample usage local write
-# python agreement_maker/make_agreement.py --candidate_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif --benchmark_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif --output /test/mock_data/huc_11090202_agreement_brad.tif
-
-
-# - Sample Inputs S3 - #
-
 # Benchmark Raster
 # s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif
 
@@ -236,3 +250,6 @@ if __name__ == "__main__":
 
 # Candidate Raster (HAND-derived)
 #/efs/fim-data/hand_fim/temp/autoeval/formatted_hand_huc_11090202_cog.tif
+
+
+# python make_agreement.py --candidate_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif --benchmark_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif --output /test/mock_data/huc_11090202_agreement_brad.tif --crosstab_path /test/mock_data/crosstab1.csv --metrics_path /test/mock_data/metrics1.csv
