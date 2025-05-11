@@ -38,22 +38,51 @@ def to_vsi(path: str) -> str:
     return path
 
 
-def setup_logger(name="fim_mosaicker") -> logging.Logger:
-    log = logging.getLogger(name)
+SUCCESS_LEVEL_NUM = 25
+logging.addLevelName(SUCCESS_LEVEL_NUM, "SUCCESS")
+
+
+def success(self, message=None, **kwargs):
+    if self.isEnabledFor(SUCCESS_LEVEL_NUM):
+        self._log(SUCCESS_LEVEL_NUM, message, (), **kwargs)
+
+
+logging.Logger.success = success
+
+JOB_ID = "fim_mosaicker"
+
+
+class JobIDFilter(logging.Filter):
+    def filter(self, record):
+        record.job_id = JOB_ID
+        return True
+
+
+def setup_logger() -> logging.Logger:
+    log = logging.getLogger(JOB_ID)
     if log.handlers:
         return log
+
     log.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
-    h = logging.StreamHandler(sys.stderr)
-    fmt = "%(asctime)s %(levelname)s %(name)s %(message)s"
-    h.setFormatter(
+    handler = logging.StreamHandler(sys.stderr)
+    handler.addFilter(JobIDFilter())
+
+    fmt = "%(asctime)s %(levelname)s %(job_id)s %(message)s"
+    handler.setFormatter(
         jsonlogger.JsonFormatter(
             fmt=fmt,
             datefmt="%Y-%m-%dT%H:%M:%S.%fZ",
-            rename_fields={"asctime": "timestamp", "levelname": "level"},
+            rename_fields={
+                "asctime": "timestamp",
+                "levelname": "level",
+                # job_id stays as-is
+                # message stays as-is
+            },
             json_ensure_ascii=False,
         )
     )
-    log.addHandler(h)
+
+    log.addHandler(handler)
     log.propagate = False
     return log
 
@@ -317,53 +346,60 @@ def main():
         help="‘extent’→ byte, 255 nodata; ‘depth’ → float32, -9999 no data",
     )
     args = p.parse_args()
+    try:
+        if os.path.isfile(args.raster_paths):
+            paths = json.load(open(args.raster_paths))
+        else:
+            paths = json.loads(args.raster_paths)
 
-    if os.path.isfile(args.raster_paths):
-        paths = json.load(open(args.raster_paths))
-    else:
-        paths = json.loads(args.raster_paths)
+        rasters = load_rasters([str(p) for p in paths], log)
+        gt, dims, crs = pick_target_grid(rasters, log)
 
-    rasters = load_rasters([str(p) for p in paths], log)
-    gt, dims, crs = pick_target_grid(rasters, log)
+        aligned_ds, tmpdir = build_vrts(rasters, gt, dims, crs, log)
 
-    aligned_ds, tmpdir = build_vrts(rasters, gt, dims, crs, log)
+        # choose output type
+        if args.fim_type == "extent":
+            dtype, nodata = gdal.GDT_Byte, 255
+        else:
+            dtype, nodata = gdal.GDT_Float32, -9999
 
-    # choose output type
-    if args.fim_type == "extent":
-        dtype, nodata = gdal.GDT_Byte, 255
-    else:
-        dtype, nodata = gdal.GDT_Float32, -9999
+        tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
 
-    tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
-
-    # do the merge
-    out_ds = mosaic_blocks(aligned_ds, tmp_out, gt, dims, crs, dtype, nodata, log)
-    build_overviews(out_ds, log)
-    out_ds.FlushCache()
-    out_ds = None
-    gc.collect()
-
-    if args.clip_geometry_path:
-        clip_output(tmp_out, args.clip_geometry_path, nodata, log)
+        # do the merge
+        out_ds = mosaic_blocks(aligned_ds, tmp_out, gt, dims, crs, dtype, nodata, log)
+        build_overviews(out_ds, log)
+        out_ds.FlushCache()
+        out_ds = None
         gc.collect()
 
-    # push via fsspec
-    log.info(f"Pushing temp COG → {args.mosaic_output_path}")
-    with open(tmp_out, "rb") as ifp, fsspec.open(args.mosaic_output_path, "wb") as ofp:
-        shutil.copyfileobj(ifp, ofp)
-    os.remove(tmp_out)
+        if args.clip_geometry_path:
+            clip_output(tmp_out, args.clip_geometry_path, nodata, log)
+            gc.collect()
 
-    # close all warped VRTs (so GDAL cache can free memory)
-    for i in range(len(aligned_ds)):
-        aligned_ds[i] = None
-    aligned_ds.clear()
-    shutil.rmtree(tmpdir, ignore_errors=True)
+        # push via fsspec
+        log.info(f"Pushing temp COG → {args.mosaic_output_path}")
+        with open(tmp_out, "rb") as ifp, fsspec.open(
+            args.mosaic_output_path, "wb"
+        ) as ofp:
+            shutil.copyfileobj(ifp, ofp)
+        os.remove(tmp_out)
 
-    # also close original rasters
-    for r in rasters:
-        r.ds = None
+        # close all warped VRTs (so GDAL cache can free memory)
+        for i in range(len(aligned_ds)):
+            aligned_ds[i] = None
+        aligned_ds.clear()
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
-    log.info("Mosaic COG complete → %s", args.mosaic_output_path)
+        # also close original rasters
+        for r in rasters:
+            r.ds = None
+
+        log.success({"mosaic_output_path": args.mosaic_output_path})
+
+    except Exception as e:
+        # Last record on failure must be ERROR
+        log.error(f"{JOB_ID} run failed: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
