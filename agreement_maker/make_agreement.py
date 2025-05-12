@@ -109,17 +109,11 @@ def compute_agreement_map(
     agreement_map = candidate_homog.gval.compute_agreement_map(
         benchmark_map=benchmark_homog
     )
+    print(agreement_map)
 
     log.info("Computing crosstab_table and writing")
     crosstab_table = agreement_map.gval.compute_crosstab()
     crosstab_table.to_csv(crosstab_path)
-
-    # compute metrics
-    log.info("Computing metrics and writing")
-    metric_table_select = crosstab_table.gval.compute_categorical_metrics(
-                negative_categories=[0, 1], positive_categories=[2]
-            )
-    metric_table_select.to_csv(metrics_table)
 
     return agreement_map
 
