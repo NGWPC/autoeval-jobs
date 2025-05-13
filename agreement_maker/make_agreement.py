@@ -29,6 +29,7 @@ gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
 # -----------------------------------------------------------------------------
 DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
 
+
 def setup_logger(name="make_agreement") -> logging.Logger:
     """Return a JSON-formatter logger with timestamp+level fields."""
     log = logging.getLogger(name)
@@ -122,27 +123,29 @@ def write_agreement_map(
     agreement_map: xr.DataArray,
     outpath: str,
     client: Client,
-    gdal_block_size: int,
+    block_size: int,
     log: logging.Logger,
 ) -> None:
-    """Write the agreement map to a tiled GeoTIFF using block-wise processing."""
     log.info(f"Writing agreement map to {outpath}")
+
+    # use rasterio to write agreement map (better for large rasters)
+    tasks = []
     output_profile = {
         "driver": "GTiff",
         "height": agreement_map.rio.height,
         "width": agreement_map.rio.width,
         "count": 1,
-        "dtype": np.uint8,
+        "dtype": agreement_map.dtype,
         "crs": agreement_map.rio.crs,
         "transform": agreement_map.rio.transform(),
         "compress": "LZW",
         "tiled": True,
-        "blockxsize": gdal_block_size,
-        "blockysize": gdal_block_size,
-        "nodata": 255,
+        "blockxsize": 8192,
+        "blockysize": 8192,
+        "nodata": -9999,
     }
 
-    tasks = []
+    # Write data block by block
     with rasterio.open(outpath, "w", **output_profile) as dst:
         for ij, window in dst.block_windows(1):
             i, j = ij
@@ -152,17 +155,16 @@ def write_agreement_map(
                 block = agreement_map.isel(
                     x=slice(win.col_off, win.col_off + win.width),
                     y=slice(win.row_off, win.row_off + win.height),
-                ).compute()
-                arr2d = np.squeeze(block.values).astype(np.uint8)
+                ).compute()  # only compute this block!
+
+                arr2d = np.squeeze(block.values).astype("uint8")
                 with rasterio.open(outpath, "r+") as d:
                     d.write(arr2d, 1, window=win)
                 return True
 
             tasks.append(write_window(window, i, j))
 
-    log.info("Submitting write tasks to Dask")
     client.compute(tasks, sync=True)
-    log.info(f"Agreement map written to {outpath}")
 
 
 def main():
@@ -196,20 +198,20 @@ def main():
         help="Path for output metrics table (local or S3)",
     )
     parser.add_argument(
-        "--gdal_block_size",
+        "--block_size",
         required=False,
-        default="256",
-        help="Block size for GDAL. Default is 256.",
+        default="4096",
+        help="Block size for writing agreement raster. Default is 4096.",
     )
 
     args = parser.parse_args()
 
     # Validate and set GDAL block size
     try:
-        gdal_block_size = int(args.gdal_block_size)
-        gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", str(gdal_block_size))
+        block_size = int(args.block_size)
+        gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", str(block_size))
     except ValueError:
-        log.error(f"Invalid gdal_block_size: {args.gdal_block_size}. Must be an integer.")
+        log.error(f"Invalid block_size: {args.block_size}. Must be an integer.")
         sys.exit(1)
 
     # Set up Dask cluster
@@ -237,7 +239,7 @@ def main():
         # Write agreement map to GeoTIFF
         with rasterio.Env():
             write_agreement_map(
-                agreement_map, args.output_path, client, gdal_block_size, log
+                agreement_map, args.output_path, client, block_size, log
             )
 
     except Exception as e:
