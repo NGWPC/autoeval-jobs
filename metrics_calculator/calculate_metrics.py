@@ -3,31 +3,9 @@ import os
 import sys
 import argparse
 import logging
-import rioxarray as rxr
-import xarray as xr
 import pandas as pd
-import numpy as np
 import gval
 from pythonjsonlogger import jsonlogger
-from osgeo import gdal
-import dask
-from dask.distributed import LocalCluster, Client
-
-# -----------------------------------------------------------------------------
-# GLOBAL GDAL CONFIGURATION
-# -----------------------------------------------------------------------------
-gdal.SetConfigOption("GDAL_CACHEMAX", os.getenv("GDAL_CACHEMAX"))
-gdal.SetConfigOption("GDAL_NUM_THREADS", "1")
-gdal.SetConfigOption("GDAL_TIFF_DIRECT_IO", "YES")
-gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", "256")
-gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "TRUE")
-gdal.UseExceptions()
-gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
-
-# -----------------------------------------------------------------------------
-# GLOBAL DASK CONFIGURATION
-# -----------------------------------------------------------------------------
-DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
 
 
 def setup_logger(name="raster_metrics") -> logging.Logger:
@@ -77,36 +55,7 @@ def main():
     parser.add_argument("--chunk_size", type=int, default=1024, help="Chunk size for processing large rasters")
     args = parser.parse_args()
 
-    client = None
-    cluster = None
-
     try:
-        # --- Dask Configuration ---
-        log.info("Setting up Dask local cluster")
-        cluster = LocalCluster(
-            n_workers=1,
-            threads_per_worker=1,
-            processes=False,
-            memory_limit=DASK_CLUST_MAX_MEM,
-        )
-        client = Client(cluster)
-        log.info(f"Dask dashboard link: {client.dashboard_link}")
-
-        # GDAL tuning parameters
-        gdal_opts = dict(
-            GDAL_CACHEMAX=1024,
-            GDAL_NUM_THREADS=1,
-            GDAL_TIFF_DIRECT_IO="YES",
-            GDAL_TIFF_OVR_BLOCKSIZE=256,
-            GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-        )
-        for key, value in gdal_opts.items():
-            gdal.SetConfigOption(key, str(value))
-            log.info(f"Set GDAL option: {key}={value}")
-
-        # Dask config
-        dask.config.set({"array.slicing.split-large-chunks": True})
-
         # Compute metrics
         metrics_table = calculate_metrics(args.crosstab_path, log)
 
@@ -118,11 +67,6 @@ def main():
     except Exception as e:
         log.error(f"Error processing: {e}", exc_info=True)
 
-    finally:
-        if client:
-            client.close()
-        if cluster:
-            cluster.close()
 
 if __name__ == "__main__":
     main()
