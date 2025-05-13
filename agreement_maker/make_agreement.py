@@ -3,8 +3,6 @@ import os
 import sys
 import argparse
 import logging
-import tempfile
-import shutil
 from typing import Tuple
 import numpy as np
 import rasterio
@@ -22,7 +20,6 @@ from osgeo import gdal
 gdal.SetConfigOption("GDAL_CACHEMAX", os.getenv("GDAL_CACHEMAX"))
 gdal.SetConfigOption("GDAL_NUM_THREADS", "1")
 gdal.SetConfigOption("GDAL_TIFF_DIRECT_IO", "YES")
-gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", "256")
 gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "TRUE")
 gdal.UseExceptions()
 gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
@@ -125,6 +122,7 @@ def write_agreement_map(
     agreement_map: xr.DataArray,
     outpath: str,
     client: Client,
+    gdal_block_size: int,
     log: logging.Logger,
 ) -> None:
     """Write the agreement map to a tiled GeoTIFF using block-wise processing."""
@@ -139,8 +137,8 @@ def write_agreement_map(
         "transform": agreement_map.rio.transform(),
         "compress": "LZW",
         "tiled": True,
-        "blockxsize": 8192,
-        "blockysize": 8192,
+        "blockxsize": gdal_block_size,
+        "blockysize": gdal_block_size,
         "nodata": 255,
     }
 
@@ -197,9 +195,22 @@ def main():
         required=True,
         help="Path for output metrics table (local or S3)",
     )
+    parser.add_argument(
+        "--gdal_block_size",
+        required=False,
+        default="256",
+        help="Block size for GDAL. Default is 256.",
+    )
 
     args = parser.parse_args()
-    print(args)
+
+    # Validate and set GDAL block size
+    try:
+        gdal_block_size = int(args.gdal_block_size)
+        gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", str(gdal_block_size))
+    except ValueError:
+        log.error(f"Invalid gdal_block_size: {args.gdal_block_size}. Must be an integer.")
+        sys.exit(1)
 
     # Set up Dask cluster
     client, cluster = setup_dask_cluster(log)
@@ -211,24 +222,33 @@ def main():
         )
 
         # Compute agreement map
-        agreement_map = compute_agreement_map(candidate, benchmark, args.crosstab_path, args.metrics_path, log)
+        agreement_map = compute_agreement_map(
+            candidate, benchmark, args.crosstab_path, args.metrics_path, log
+        )
+
+        # Prepare GDAL_CACHEMAX as an integer
+        gdal_cachemax = os.getenv("GDAL_CACHEMAX")
+        try:
+            gdal_cachemax = int(gdal_cachemax) if gdal_cachemax is not None else 1024  # Default to 512 MB
+        except ValueError:
+            log.warning(f"Invalid GDAL_CACHEMAX: {gdal_cachemax}. Using default of 1024 MB.")
+            gdal_cachemax = 1024
 
         # Write agreement map to GeoTIFF
-        with rasterio.Env(
-            GDAL_CACHEMAX=1024,
-            GDAL_NUM_THREADS=1,
-            GDAL_TIFF_DIRECT_IO="YES",
-            GDAL_TIFF_OVR_BLOCKSIZE=256,
-            GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-        ):
-            write_agreement_map(agreement_map, args.output_path, client, log)
+        with rasterio.Env():
+            write_agreement_map(
+                agreement_map, args.output_path, client, gdal_block_size, log
+            )
+
+    except Exception as e:
+        log.error(f"Processing failed: {str(e)}", exc_info=True)
+        raise
 
     finally:
         log.info("Shutting down Dask client and cluster")
         client.close()
         cluster.close()
         log.info("Dask shutdown complete")
-
 
 if __name__ == "__main__":
     main()
