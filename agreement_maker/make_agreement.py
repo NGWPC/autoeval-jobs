@@ -16,11 +16,10 @@ from dask import delayed
 from pythonjsonlogger import jsonlogger
 from osgeo import gdal
 
-
 # -----------------------------------------------------------------------------
 # GLOBAL GDAL CONFIGURATION
 # -----------------------------------------------------------------------------
-gdal.SetConfigOption("GDAL_CACHEMAX", "1024")
+gdal.SetConfigOption("GDAL_CACHEMAX", os.getenv("GDAL_CACHEMAX"))
 gdal.SetConfigOption("GDAL_NUM_THREADS", "1")
 gdal.SetConfigOption("GDAL_TIFF_DIRECT_IO", "YES")
 gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", "256")
@@ -28,6 +27,10 @@ gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "TRUE")
 gdal.UseExceptions()
 gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
 
+# -----------------------------------------------------------------------------
+# GLOBAL DASK CONFIGURATION
+# -----------------------------------------------------------------------------
+DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
 
 def setup_logger(name="make_agreement") -> logging.Logger:
     """Return a JSON-formatter logger with timestamp+level fields."""
@@ -58,7 +61,7 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
         n_workers=1,
         threads_per_worker=1,
         processes=False,
-        memory_limit="7GiB",
+        memory_limit=DASK_CLUST_MAX_MEM,
     )
     client = Client(cluster)
     log.info(f"Dask dashboard link: {client.dashboard_link}")

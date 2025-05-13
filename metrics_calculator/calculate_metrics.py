@@ -16,9 +16,18 @@ from dask.distributed import LocalCluster, Client
 # -----------------------------------------------------------------------------
 # GLOBAL GDAL CONFIGURATION
 # -----------------------------------------------------------------------------
-gdal.SetConfigOption("GDAL_CACHEMAX", "1024")
+gdal.SetConfigOption("GDAL_CACHEMAX", os.getenv("GDAL_CACHEMAX"))
 gdal.SetConfigOption("GDAL_NUM_THREADS", "1")
+gdal.SetConfigOption("GDAL_TIFF_DIRECT_IO", "YES")
+gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", "256")
+gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "TRUE")
 gdal.UseExceptions()
+gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
+
+# -----------------------------------------------------------------------------
+# GLOBAL DASK CONFIGURATION
+# -----------------------------------------------------------------------------
+DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
 
 
 def setup_logger(name="raster_metrics") -> logging.Logger:
@@ -78,7 +87,7 @@ def main():
             n_workers=1,
             threads_per_worker=1,
             processes=False,
-            memory_limit="7GiB",
+            memory_limit=DASK_CLUST_MAX_MEM,
         )
         client = Client(cluster)
         log.info(f"Dask dashboard link: {client.dashboard_link}")
@@ -117,3 +126,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    # example usage local
+    # python calculate_metrics.py --crosstab_path /test/mock_data/crosstab1.csv --metrics_path /test/mock_data/metrics2.csv
