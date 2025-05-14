@@ -140,8 +140,8 @@ def write_agreement_map(
         "transform": agreement_map.rio.transform(),
         "compress": "LZW",
         "tiled": True,
-        "blockxsize": 8192,
-        "blockysize": 8192,
+        "blockxsize": block_size,
+        "blockysize": block_size,
         "nodata": -9999,
     }
 
@@ -171,40 +171,51 @@ def main():
     log = setup_logger()
 
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Compare two raster datasets.")
-    parser.add_argument(
+    p = argparse.ArgumentParser(description="Compare two raster datasets.")
+    p.add_argument(
+        "--fim_type",
+        required=True,
+        choices=["depth", "extent"],
+        help="Specifies whether agreement is based on spatial 'extent' overlap (binary) or potentially 'depth' values. Influences output raster format."
+    )
+    p.add_argument(
         "--candidate_path",
         required=True,
         help="Path to candidate raster (local or S3)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--benchmark_path",
         required=True,
         help="Path to benchmark raster (local or S3)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--output_path",
         required=True,
         help="Path for output agreement map (local or S3)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--crosstab_path",
         required=True,
         help="Path for output crosstab table (local or S3)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--metrics_path",
         required=True,
         help="Path for output metrics table (local or S3)",
     )
-    parser.add_argument(
+    p.add_argument(
+        "--clip_geoms",
+        required=False,
+        help="Optional path/URI to a JSON file containing paths to geopackage or geojson vector masks used to exclude or include areas in the final agreement raster."
+    )
+    p.add_argument(
         "--block_size",
         required=False,
         default="4096",
         help="Block size for writing agreement raster. Default is 4096.",
     )
 
-    args = parser.parse_args()
+    args = p.parse_args()
 
     # Validate and set GDAL block size
     try:
@@ -252,6 +263,7 @@ def main():
         cluster.close()
         log.info("Dask shutdown complete")
 
+
 if __name__ == "__main__":
     main()
 
@@ -271,4 +283,4 @@ if __name__ == "__main__":
 #/efs/fim-data/hand_fim/temp/autoeval/formatted_hand_huc_11090202_cog.tif
 
 
-# python make_agreement.py --candidate_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif --benchmark_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif --output /test/mock_data/huc_11090202_agreement_brad.tif --crosstab_path /test/mock_data/crosstab1.csv --metrics_path /test/mock_data/metrics1.csv
+# python make_agreement.py --fim_type extent --candidate_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_hand_huc_11090202_cog.tif --benchmark_path s3://fimc-data/autoeval/test_data/agreement/inputs/huc_11090202/formatted_ble_huc_11090202_cog.tif --output /test/mock_data/huc_11090202_agreement_brad.tif --crosstab_path /test/mock_data/crosstab1.csv --metrics_path /test/mock_data/metrics1.csv
