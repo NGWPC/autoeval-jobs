@@ -2,7 +2,6 @@
 import os
 import shutil
 import argparse
-import pdb
 from typing import Any, Dict
 
 import numpy as np

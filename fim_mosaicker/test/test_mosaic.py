@@ -63,17 +63,14 @@ class TestMosaicScript(unittest.TestCase):
         if self.output_path.exists():
             self.output_path.unlink()
 
-        # --- Prepare command arguments adhering to new script interface ---
-        # Convert the list of path strings into a single JSON string
-        raster_paths_json_str = json.dumps(
-            self.raster_paths_str_list
-        )  # <<< Convert list to JSON string
+        # Prepare raster_paths as a single space-separated string
+        raster_paths_space_str = " ".join(self.raster_paths_str_list)
 
         cmd = [
             sys.executable,  # Use the current Python interpreter
             str(self.script_path),
             "--raster_paths",
-            raster_paths_json_str,  # <<< Pass the single JSON string here
+            raster_paths_space_str,  # Pass paths as space-separated list
             "--mosaic_output_path",
             str(self.output_path),
             "--fim_type",
