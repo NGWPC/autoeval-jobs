@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import os
 import shutil
-import json
 import argparse
-from typing import Union, Dict, Any
+import pdb
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
@@ -24,15 +24,20 @@ def open_file(path: str, mode: str = "rb"):
 
 
 def inundate(
-    catchment_data: Union[str, Dict[str, Any]],
+    catchment_parquet: str,
     forecast_path: str,
     output_path: str,
     geo_mem_cache: int = 512,  # in MB
 ) -> str:
     """
-    Generate inundation map from NWM forecasts and HAND data using fsspec.
+    Generate an inundation map from:
+      1) A catchment HAND‐table Parquet (with list‐columns: stage & discharge_cms)
+      2) An NWM forecast CSV (feature_id, discharge)
+      3) Two rasters: REM & catchment ID
+
+    Writes a uint8 flooded/dry mask to `output_path` (local or s3://).
     """
-    # 1) Configure AWS creds so fsspec/s3fs & rasterio pick them up:
+    # Configure AWS creds so fsspec/s3fs & rasterio pick them up:
     session = boto3.Session(
         region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
     )
@@ -46,14 +51,11 @@ def inundate(
             }
         )
 
-    # 2) Load catchment JSON
-    if isinstance(catchment_data, str):
-        with open_file(catchment_data, "rt") as f:
-            catchment = json.load(f)
-    else:
-        catchment = catchment_data
+    # Load catchment table from Parquet (via fsspec)
+    with open_file(catchment_parquet, "rb") as f:
+        catchment_df = pd.read_parquet(f)
 
-    # 3) Read forecast CSV (only two columns) using fsspec
+    # Read forecast CSV (only two columns) using fsspec
     with open_file(forecast_path, "rt") as f:
         forecast = pd.read_csv(
             f,
@@ -63,35 +65,36 @@ def inundate(
             dtype={"feature_id": np.int32, "discharge": np.float32},
         )
 
-    # 4) Build hydro-stage lookup
-    hydro_df = (
-        pd.DataFrame(catchment["hydrotable_entries"])
-        .T.reset_index(names="HydroID")
-        .query("lake_id == -999")
-        .explode(["stage", "discharge_cms"])
-    )
-    hydro_df = hydro_df.astype(
-        {
-            "HydroID": np.int32,
-            "stage": np.float32,
-            "discharge_cms": np.float32,
-            "nwm_feature_id": np.int32,
-        }
-    )
+    # Build HydroID → stage lookup
+    # ensure lake_id is integer
+    catchment_df["lake_id"] = catchment_df["lake_id"].astype(int)
+    # now filter out lakes (lake_id == -999)
+    hydro_df = catchment_df[catchment_df["lake_id"] == -999]
+    if hydro_df.empty:
+        raise ValueError("No catchments with negative lake_id -999 found in Parquet")
+
     merged = hydro_df.merge(
         forecast, left_on="nwm_feature_id", right_on="feature_id", how="inner"
     )
     if merged.empty:
         raise ValueError("No matching forecast data for catchment features")
 
-    merged.set_index("HydroID", inplace=True)
-    stage_map = (
-        merged.groupby(level=0, group_keys=False)
-        .apply(lambda g: np.interp(g.discharge.iloc[0], g.discharge_cms, g.stage))
-        .to_dict()
-    )
+    # Interpolate each feature’s forecast discharge onto its lists
+    stage_map: Dict[int, float] = {
+        int(row["HydroID"]): float(
+            np.interp(
+                row["discharge"],  # scalar from forecast
+                row["discharge_cms"],  # list from Parquet
+                row["stage"],  # list from Parquet
+            )
+        )
+        for _, row in merged.iterrows()
+    }
 
-    # 5) Prepare temporary output
+    rem_path = catchment_df["rem_raster_path"].iat[0]
+    cat_path = catchment_df["catchment_raster_path"].iat[0]
+
+    # Prepare temporary output
     tmp_tif = "/tmp/temp_inundation.tif"
     config_options = {
         "GDAL_CACHEMAX": geo_mem_cache,
@@ -100,11 +103,8 @@ def inundate(
         "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.vrt",
     }
 
-    # 6) Raster processing with rasterio.Env
+    # Raster processing with rasterio.Env
     with rasterio.Env(**config_options):
-        rem_path = catchment["raster_pair"]["rem_raster_path"]
-        cat_path = catchment["raster_pair"]["catchment_raster_path"]
-
         with rasterio.open(rem_path) as rem, rasterio.open(cat_path) as cat:
             profile = rem.profile.copy()
             profile.update(
@@ -119,11 +119,13 @@ def inundate(
 
             with rasterio.open(tmp_tif, "w", **profile) as dst:
                 for _, window in rem.block_windows(1):
-                    rem_win = rem.read(1, window=window, out_dtype=np.float32)
+                    rem_win = rem.read(
+                        1, window=window, out_dtype=np.float32, masked=True
+                    )
                     cat_win = cat.read(1, window=window, out_dtype=np.int32)
 
                     inund = np.zeros(rem_win.shape, dtype=np.uint8)
-                    valid = rem_win >= 0
+                    valid = ~rem_win.masked
                     if valid.any():
                         for uid in np.unique(cat_win[valid]):
                             if uid in stage_map:
@@ -131,9 +133,11 @@ def inundate(
                                 mask = (cat_win == uid) & valid & (rem_win <= stg)
                                 inund[mask] = 1
 
+                    # stamp nodata value into any place the REM has nodata
+                    inund[rem_win.mask] = profile["nodata"]
                     dst.write(inund, 1, window=window)
 
-    # 7) Move or upload result
+    # Move or upload result
     if output_path.startswith("s3://"):
         path_no_scheme = output_path[len("s3://") :]
         bucket, key = path_no_scheme.split("/", 1)
@@ -153,7 +157,7 @@ def main():
     parser.add_argument(
         "--catchment-data",
         required=True,
-        help="Path to catchment JSON (local or s3://)",
+        help="Path to catchment Parquet (local or s3://)",
     )
     parser.add_argument(
         "--forecast-path", required=True, help="Path to forecast CSV (local or s3://)"
@@ -164,11 +168,12 @@ def main():
     parser.add_argument(
         "--geo-mem-cache", type=int, default=512, help="GDAL cache in MB"
     )
+
     args = parser.parse_args()
 
     try:
         out = inundate(
-            catchment_data=args.catchment_data,
+            catchment_parquet=args.catchment_data,
             forecast_path=args.forecast_path,
             output_path=args.output_path,
             geo_mem_cache=args.geo_mem_cache,
