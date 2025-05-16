@@ -33,6 +33,9 @@ gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
 
 
 def to_vsi(path: str) -> str:
+    """
+    Convert a standard file path or S3 path to a GDAL VSI path. This allows us to feed in either a standard filesystem path or an S3 object path to GDAL and have the script be able to work with either without the user having to think about it.
+    """
     if path.lower().startswith("s3://"):
         return "/vsis3/" + path[5:]
     return path
@@ -43,6 +46,9 @@ logging.addLevelName(SUCCESS_LEVEL_NUM, "SUCCESS")
 
 
 def success(self, message=None, **kwargs):
+    """
+    Custom log level for SUCCESS events. If everything goes well this should be the last messaged logged from the job.
+    """
     if self.isEnabledFor(SUCCESS_LEVEL_NUM):
         self._log(SUCCESS_LEVEL_NUM, message, (), **kwargs)
 
@@ -59,6 +65,9 @@ class JobIDFilter(logging.Filter):
 
 
 def setup_logger() -> logging.Logger:
+    """
+    Initialize a JSON-format logger that conforms to the log conventions specified in job_conventions.md.
+    """
     log = logging.getLogger(JOB_ID)
     if log.handlers:
         return log
@@ -98,6 +107,10 @@ class RasterInfo:
 
 
 def load_rasters(paths: List[str], log: logging.Logger) -> List[RasterInfo]:
+    """
+    Groups raster info into RasterInfo dataclasses. Ensures later processing functions operate
+    on only valid rasters.
+    """
     recs: List[RasterInfo] = []
     for p in paths:
         vst = to_vsi(p)
@@ -130,6 +143,11 @@ def load_rasters(paths: List[str], log: logging.Logger) -> List[RasterInfo]:
 def pick_target_grid(
     srcs: List[RasterInfo], log: logging.Logger
 ) -> Tuple[GeoTransform, Tuple[int, int], str]:
+    """
+    Finds the lowest resolution raster and picks that as the resolution to project to.
+    Determines the bounds of the final mosaic. Also, uses the projection of the lowest
+    resolution raster as the reference projection for the output mosaic.
+    """
     # pick lowest resolution (largest abs(pixel area))
     ref = max(srcs, key=lambda r: abs(r.gt[1]) * abs(r.gt[5]))
     log.info(f"Reference: {ref.path} (@ res {ref.gt[1]}, {ref.gt[5]})")
@@ -158,9 +176,11 @@ def build_vrts(
     log: logging.Logger,
 ) -> Tuple[List[gdal.Dataset], str]:
     """
-    Warp any mis-aligned sources into per-tile VRTs at the target grid.
-    We’ll keep them alive in-memory only long enough to read their blocks,
-    then close them explicitly.
+    Warps rasters to the projection, resolution, and alignment returned by the
+    "pick_target_grid" function. The returned warped rasters are VRT's stored in
+    stored in a temporary directory that is cleaned up after the script exits.
+    This approach is an efficient way to compare multiple input rasters that may
+    have heterogenous projections, alignments, resolutions, etc.
     """
     tmpdir = tempfile.mkdtemp(prefix="vrt_")
     aligned = []
@@ -169,7 +189,7 @@ def build_vrts(
         if same:
             aligned.append(r.ds)
         else:
-            log.info(f"Warp→VRT: {r.path}")
+            log.info(f"Warp into VRT: {r.path}")
             vrt_name = f"{Path(r.path).stem}_aligned.vrt"
             vrt_path = os.path.join(tmpdir, vrt_name)
             gdal.Warp(
@@ -206,8 +226,11 @@ def mosaic_blocks(
     log: logging.Logger,
 ) -> gdal.Dataset:
     """
-    Do a block‐wise NaN‐max merge into a COG.  Reuses four fixed buffers
-    at the driver’s block size to keep memory constant.
+    Do a block‐wise NaN‐max merge of aligned rasters into a final mosaic in  COG format.
+    Reuses four fixed buffers at the driver’s block size to keep memory constant to do
+    the merging. Numpy is used to perform the max operation by casting the blocks to
+    Numpy arrays to keep things performant. This approach supports mosaicing many, large
+    rasters as long as the input rasters are tiled.
     """
     drv = gdal.GetDriverByName("GTiff")
     ds = drv.Create(
@@ -294,6 +317,9 @@ def mosaic_blocks(
 
 
 def build_overviews(ds: gdal.Dataset, log: logging.Logger):
+    """
+    Create COG overviews for the final output mosaic.
+    """
     ds = gdal.Open(ds.GetDescription(), gdal.GA_Update)
     band = ds.GetRasterBand(1)
     size = min(ds.RasterXSize, ds.RasterYSize)
@@ -312,6 +338,11 @@ def build_overviews(ds: gdal.Dataset, log: logging.Logger):
 
 
 def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
+    """
+    Apply a clip geometry to the mosaic. Functionally this step will often
+    be necessary since we are producing metrics using two mosaicked rasters that
+    need to be clipped to have the same ROI so that a pixelwise agreement can be computed.
+    """
     tmp = src + "_clipped.tif"
     gdal.Warp(
         tmp,
@@ -330,12 +361,33 @@ def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
 
 
 def main():
+    """
+    Mosaic and clip raster files into a single COG (Cloud Optimized GeoTIFF).
+
+    This job supports both local files and S3 sources or destinations. The logging format follows that outlined in job_conventions.md
+
+    Arguments:
+        --raster_paths           Required. One or more input raster file paths, or a single directory containing rasters.
+        --mosaic_output_path     Required. Output path for the mosaic (local file path or S3 URI).
+        --clip_geometry_path     Optional. Path to a vector file (e.g., GeoJSON, Shapefile) used to clip the output mosaic.
+        --fim_type               Optional. Either 'extent' (default, produces a byte raster with nodata=255) or 
+                                 'depth' (produces a float32 raster with nodata=-9999).
+
+    Example usage:
+
+        python mosaic_script.py \\
+            --raster_paths s3://mybucket/tiles/*.tif \\
+            --mosaic_output_path s3://mybucket/output/mosaic_cog.tif \\
+            --clip_geometry_path ./aoi.geojson \\
+            --fim_type depth
+    """
     log = setup_logger()
     p = argparse.ArgumentParser()
     p.add_argument(
         "--raster_paths",
         required=True,
-        help="JSON list of rasters or path to JSON file",
+        nargs="+",
+        help="Directory of rasters or a space-separated list of paths. List can be a single string or space seperated tokens if calling script directly from bash.",
     )
     p.add_argument("--mosaic_output_path", required=True)
     p.add_argument("--clip_geometry_path", default=None)
@@ -343,14 +395,22 @@ def main():
         "--fim_type",
         choices=["depth", "extent"],
         default="extent",
-        help="‘extent’→ byte, 255 nodata; ‘depth’ → float32, -9999 no data",
+        help="‘extent’→ byte, 255 nodata; ‘depth’ -> float32, -9999 no data",
     )
     args = p.parse_args()
     try:
-        if os.path.isfile(args.raster_paths):
-            paths = json.load(open(args.raster_paths))
+        # load raster paths
+        input_rp = args.raster_paths
+        if len(input_rp) == 1 and os.path.isdir(input_rp[0]):
+            # a directory: grab all files in it
+            paths = [str(p) for p in Path(input_rp[0]).iterdir() if p.is_file()]
+            log.info(f"Found {len(paths)} files in raster path directory {input_rp}")
         else:
-            paths = json.loads(args.raster_paths)
+            # either multiple shell-split tokens or one quoted string
+            joined = " ".join(input_rp)
+            # split on whitespace to get list of paths
+            paths = joined.split()
+            log.info(f"Using {len(paths)} provided raster paths")
 
         rasters = load_rasters([str(p) for p in paths], log)
         gt, dims, crs = pick_target_grid(rasters, log)

@@ -16,7 +16,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     # Allow system-wide pip install in newer Ubuntu/Debian
     # Add * after python3. to catch versioned directories like python3.10
-    rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED
+    rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED && \
+    apt-get remove -y python3-numpy
 
 RUN python3 --version
 RUN pip3 --version
