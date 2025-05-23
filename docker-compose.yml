@@ -22,3 +22,29 @@ services:
       - AWS_SESSION_TOKEN
     env_file:
       - .env
+
+  make-agreement-dev:
+    build: .
+    entrypoint: [ sleep, infinity ]
+    volumes:
+      - ./agreement_maker:/app
+      - ./agreement_maker/test:/test
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    env_file:
+      - .env
+
+  calculate-metrics-dev:
+    build: .
+    entrypoint: [ sleep, infinity ]
+    volumes:
+      - ./metrics_calculator:/app
+      - ./metrics_calculator/test:/test
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    env_file:
+      - .env
