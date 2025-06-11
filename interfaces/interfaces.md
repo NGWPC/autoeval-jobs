@@ -10,7 +10,7 @@ By convention when outputs are listed for a job it is assumed that these outputs
 
 **Implementation status: Inundated extents implemented. Depth FIM production will be added in FY26**
 
-### Example docker run command
+### Example command
 
 From inside the inundate-dev container would run:
 
@@ -72,7 +72,7 @@ This example lists all possible arguments. See yaml files for optional vs requir
 From inside the mosaic-dev container would run:
 
 ```
-python mosaic.py --raster_paths /paths/to/rasters/ --hwm_paths /path/to/multipoint/geometries --mosaic_output_path /path/to/output/ --clip_geometry /path/to/clipvectors --fim_type extent
+python mosaic.py --raster_paths /path/to/rasters_dir/ --hwm_paths /path/to/multipoint/geometries.gpkg --mosaic_output_path /path/to/output.tif --clip_geometry /path/to/clipvectors.geojson --fim_type extent
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments.
@@ -80,13 +80,15 @@ This example lists all possible arguments. See yaml files for optional vs requir
 ### Description  
 This job mosaics flood extents and benchmark raster data from either HAND or benchmark sources using a pixel-wise NAN-MAX selection policy. That is, for all the images being mosaicked if there are overlapping raster pixels then the maximum value of the overlapping rasters at that pixel location is selected. No-Data values are not considered when selecting the maximum (they are treated as Nan) unless all the pixels are No-Data. Rasters can be either depth or extent rasters and the mosaicking policy for overlapping rasters will remain the same. The resolution of the produced raster will be determined by the lowest resolution raster in the input data.
 
+The mosaic job was implemented the way it was to follow the example of gdal_calc.py. It first reprojects and aligns all rasters by producing a realigned VRT for each raster. Then it uses the gdal_array function to cast overlapping blocks from each of the VRTs to a numpy array and uses that array along with an accumulator array to loop through all the rasters being mosaicked and finds the pixelwise maximum for each raster that has data within that window. This approach is extremely memory efficient since only a small window of single raster is analyzed at a time and the accumulator array stores the results as we iterate through each raster. It is also performant since Numpy is performing the pixelwise max. The use of VRT's to align the raster's results in being able to create a virtual alignment without having to explicitly save intermediate data.
+
 ### Arguments
 - **fim_type**
   - This informs the job whether it is mosaicking FIMs with extents or depths.
 
 ### Inputs
 - **raster_paths** 
-  - An array of paths to rasters in tiff format. The array should be a string formatted as a json list. This input can also be a file with the stringified json list inside it. 
+  - An array of paths to rasters in tiff format. The array
 - **clip_geometry_path**
   - Optional path to a GeoJSON or gpkg file with a boundary to clip the mosaicked output to. This input will always be given in the HAND FIM evaluation pipeline and will describe the ROI being evaluated.
 

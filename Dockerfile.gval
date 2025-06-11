@@ -1,0 +1,18 @@
+FROM python:3.10
+
+# Environment variables (adjust as needed)
+ENV PYTHONUNBUFFERED=1 \
+    VENV=/usr/local/gval_env \
+    PROJDIR=/home/user/gval \
+    PATH="/usr/local/gval_env/bin:$PATH"
+
+WORKDIR $PROJDIR
+
+# Create virtual environment and upgrade pip
+RUN python -m venv $VENV && \
+    $VENV/bin/pip install --upgrade pip
+
+# Install requirements
+COPY gval-requirements.txt /tmp/requirements.txt
+RUN $VENV/bin/pip install -r /tmp/requirements.txt
+
