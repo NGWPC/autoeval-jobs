@@ -5,11 +5,19 @@ outputTransmission:
   - reference
 
 arguments:
+  chunk_size:
+    title: Chunk Size for Processing
+    description: Chunk size for processing large rasters. Affects memory usage during raster loading and processing.
+    schema:
+      type: integer
+      default: 1024
+      minimum: 256
+      maximum: 4096
 
 inputs:
-  agreement_path:
+  agreement_map_path:
     title: Raster Agreement Map Path
-    description: Path/URI to the input raster agreement map (GeoTIFF). Pixel values should encode agreement results (e.g., from raster_raster_agreement component).
+    description: Path/URI to the input raster agreement map (GeoTIFF). Pixel values should encode agreement results with encoding 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 10=NoData.
     required: true
     schema:
       type: string
@@ -20,21 +28,15 @@ outputs:
   metrics_path:
     title: Metrics Output Path
     description: |
-      Path/URI where the calculated validation metrics will be saved as a JSON file.
-      The JSON file will contain an object with performance metrics derived from the raster comparison:
-      ```json
-      {
-        "csi": <number between 0 and 1>,
-        "pod": <number between 0 and 1>,
-        "far": <number between 0 and 1>
-        // Other metrics
-      }
-      ```
-      Where:
-      - `csi`: Critical Success Index
-      - `pod`: Probability of Detection (Hit Rate)
-      - `far`: False Alarm Ratio
+      Path/URI where the calculated validation metrics will be saved as a CSV file.
+      The CSV file will contain categorical performance metrics derived from the agreement map:
+      - Critical Success Index (CSI)
+      - Probability of Detection (POD/Recall)
+      - False Alarm Ratio (FAR)
+      - Precision
+      - F1 Score
+      - And other gval categorical metrics
     schema:
       type: string
       format: uri
-      contentMediaType: application/json
+      contentMediaType: text/csv

@@ -4,6 +4,7 @@ services:
     command: ['python', '-m', 'unittest', 'test.test_mosaic']
     volumes:
       - ./fim_mosaicker:/app
+      - ./utils:/app/utils
     environment:
       - AWS_ACCESS_KEY_ID
       - AWS_SECRET_ACCESS_KEY
@@ -16,6 +17,37 @@ services:
     command: ['python', '-m', 'unittest', 'test.test_inundate']
     volumes:
       - ./hand_inundator:/app
+      - ./utils:/app/utils
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    env_file:
+      - .env
+
+  make-agreement-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.gval
+    command: ['python', '-m', 'unittest', 'test.test_make_agreement']
+    volumes:
+      - ./agreement_maker:/app
+      - ./utils:/app/utils
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    env_file:
+      - .env
+
+  calculate-metrics-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.gval
+    command: ['python', '-m', 'unittest', 'test.test_calculate_metrics']
+    volumes:
+      - ./metrics_calculator:/app
+      - ./utils:/app/utils
     environment:
       - AWS_ACCESS_KEY_ID
       - AWS_SECRET_ACCESS_KEY

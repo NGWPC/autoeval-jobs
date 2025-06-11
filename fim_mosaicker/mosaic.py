@@ -19,7 +19,7 @@ from osgeo_utils.auxiliary import extent_util
 from osgeo_utils.auxiliary.extent_util import Extent, GeoTransform
 from osgeo_utils.auxiliary.rectangle import GeoRectangle
 from osgeo_utils.auxiliary.util import open_ds
-from pythonjsonlogger import jsonlogger
+from utils.logging import setup_logger
 
 # GDAL / AWS S3 CONFIGURATION
 gdal.SetConfigOption("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
@@ -41,59 +41,7 @@ def to_vsi(path: str) -> str:
     return path
 
 
-SUCCESS_LEVEL_NUM = 25
-logging.addLevelName(SUCCESS_LEVEL_NUM, "SUCCESS")
-
-
-def success(self, message=None, **kwargs):
-    """
-    Custom log level for SUCCESS events. If everything goes well this should be the last messaged logged from the job.
-    """
-    if self.isEnabledFor(SUCCESS_LEVEL_NUM):
-        self._log(SUCCESS_LEVEL_NUM, message, (), **kwargs)
-
-
-logging.Logger.success = success
-
 JOB_ID = "fim_mosaicker"
-
-
-class JobIDFilter(logging.Filter):
-    def filter(self, record):
-        record.job_id = JOB_ID
-        return True
-
-
-def setup_logger() -> logging.Logger:
-    """
-    Initialize a JSON-format logger that conforms to the log conventions specified in job_conventions.md.
-    """
-    log = logging.getLogger(JOB_ID)
-    if log.handlers:
-        return log
-
-    log.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
-    handler = logging.StreamHandler(sys.stderr)
-    handler.addFilter(JobIDFilter())
-
-    fmt = "%(asctime)s %(levelname)s %(job_id)s %(message)s"
-    handler.setFormatter(
-        jsonlogger.JsonFormatter(
-            fmt=fmt,
-            datefmt="%Y-%m-%dT%H:%M:%S.%fZ",
-            rename_fields={
-                "asctime": "timestamp",
-                "levelname": "level",
-                # job_id stays as-is
-                # message stays as-is
-            },
-            json_ensure_ascii=False,
-        )
-    )
-
-    log.addHandler(handler)
-    log.propagate = False
-    return log
 
 
 @dataclass
@@ -381,7 +329,7 @@ def main():
             --clip_geometry_path ./aoi.geojson \\
             --fim_type depth
     """
-    log = setup_logger()
+    log = setup_logger(JOB_ID)
     p = argparse.ArgumentParser()
     p.add_argument(
         "--raster_paths",
