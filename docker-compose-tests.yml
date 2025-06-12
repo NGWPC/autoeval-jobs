@@ -46,6 +46,7 @@ services:
       context: .
       dockerfile: Dockerfile.gval
     command: ['python', '-m', 'unittest', 'test.test_calculate_metrics']
+    working_dir: /app
     volumes:
       - ./metrics_calculator:/app
       - ./utils:/app/utils

@@ -218,20 +218,41 @@ def compute_agreement_map(
         pairing_dict=pairing_dictionary,
     )
 
+    # Convert nan values to 10 (nodata) to match our encoding
+    agreement_map = agreement_map.where(~np.isnan(agreement_map), 10)
+
+    # Set pairing dictionary as attribute for later use by gval functions
+    agreement_map.attrs['pairing_dictionary'] = pairing_dictionary
+
     # Clean up aligned rasters
     del c_aligned, b_aligned
     gc.collect()
 
     # Keep original agreement map for reference
     agreement_map_og = agreement_map.copy()
+    
+    # Store original nodata mask before changing nodata value
+    original_nodata_mask = agreement_map == 10
+    
+    # Set nodata to 4 for clipping (clipped areas will become 4)
     agreement_map.rio.write_nodata(4, inplace=True)
 
     # Apply masking if exclusion masks are present
     if all_masks_df is not None:
         log.info("Applying exclusion masks to agreement map")
+        # Clip the agreement map (clipped areas become nodata value 4)
         agreement_map = agreement_map.rio.clip(all_masks_df["geometry"], invert=True)
-        # The clipping operation should preserve the original NoData areas automatically
-        # No need for additional coordinate selection which can corrupt the data
+        # Restore original nodata areas (corners, etc.) to value 10 using coordinate selection
+        # This ensures original nodata remains 10, while clipped areas stay 4
+        agreement_map.data = xr.where(
+            agreement_map_og.sel({'x': agreement_map.coords['x'], 'y': agreement_map.coords['y']}) == 10,
+            10,
+            agreement_map,
+        )
+    
+    # Preserve the pairing dictionary attribute
+    if hasattr(agreement_map_og, 'attrs') and 'pairing_dictionary' in agreement_map_og.attrs:
+        agreement_map.attrs['pairing_dictionary'] = agreement_map_og.attrs['pairing_dictionary']
 
     log.info("Computing crosstab table for metrics")
     crosstab_table = agreement_map.gval.compute_crosstab()
@@ -405,8 +426,10 @@ def main():
 
         # Write agreement map to GeoTIFF
         with rasterio.Env():
+            # Set nodata to 10 for writing (following reference implementation)
+            agreement_map_write = agreement_map.rio.write_nodata(10, encoded=True)
             write_agreement_map(
-                agreement_map, args.output_path, client, block_size, log
+                agreement_map_write, args.output_path, client, block_size, log
             )
 
         success_outputs = {"output_path": args.output_path}
