@@ -17,17 +17,18 @@ import fsspec
 from fsspec.core import url_to_fs
 from dask.distributed import Client, LocalCluster
 from dask import delayed
-from osgeo import gdal
+import rasterio
+from rasterio.env import Env
 from utils.logging import setup_logger
 
 # -----------------------------------------------------------------------------
-# GLOBAL GDAL CONFIGURATION
+# GLOBAL GDAL CONFIGURATION (via rasterio)
 # -----------------------------------------------------------------------------
-gdal.SetConfigOption("GDAL_NUM_THREADS", "1")
-gdal.SetConfigOption("GDAL_TIFF_DIRECT_IO", "YES")
-gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "TRUE")
-gdal.UseExceptions()
-gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
+import os
+os.environ["GDAL_NUM_THREADS"] = "1"
+os.environ["GDAL_TIFF_DIRECT_IO"] = "YES"
+os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "TRUE"
+os.environ["CPL_LOG_ERRORS"] = "ON"
 
 # -----------------------------------------------------------------------------
 # GLOBAL DASK CONFIGURATION
@@ -229,14 +230,8 @@ def compute_agreement_map(
     if all_masks_df is not None:
         log.info("Applying exclusion masks to agreement map")
         agreement_map = agreement_map.rio.clip(all_masks_df["geometry"], invert=True)
-        agreement_map.data = xr.where(
-            agreement_map_og.sel(
-                {"x": agreement_map.coords["x"], "y": agreement_map.coords["y"]}
-            )
-            == 10,
-            10,
-            agreement_map,
-        )
+        # The clipping operation should preserve the original NoData areas automatically
+        # No need for additional coordinate selection which can corrupt the data
 
     log.info("Computing crosstab table for metrics")
     crosstab_table = agreement_map.gval.compute_crosstab()
@@ -245,7 +240,7 @@ def compute_agreement_map(
     if metrics_path:
         log.info("Computing metrics table and writing")
         metrics_table = crosstab_table.gval.compute_categorical_metrics(
-            positive_categories=[3], negative_categories=[0], metrics="all"
+            positive_categories=[1], negative_categories=[0], metrics="all"
         )
 
         # Write metrics table using fsspec for S3 compatibility
@@ -312,21 +307,27 @@ def write_agreement_map(
 
     client.compute(tasks, sync=True)
 
-    # Convert to COG using GDAL translate
+    # Convert to COG using rio-cogeo
     log.info("Converting to Cloud Optimized GeoTIFF")
-    translate_options = gdal.TranslateOptions(
-        format="COG",
-        creationOptions=[
-            "COMPRESS=LZW",
-            "PREDICTOR=2",
-            "TILED=YES",
-            "BLOCKSIZE=512",
-            "OVERVIEW_RESAMPLING=NEAREST",
-        ],
+    from rio_cogeo.cogeo import cog_translate
+    from rio_cogeo.profiles import LZWProfile
+    
+    # Configure COG profile
+    cog_profile = LZWProfile().data.copy()
+    cog_profile.update({
+        "BLOCKSIZE": 512,
+        "OVERVIEW_RESAMPLING": "nearest",
+    })
+    
+    # Convert to COG
+    cog_translate(
+        temp_outpath,
+        outpath,
+        cog_profile,
+        overview_level=4,
+        overview_resampling="nearest",
+        quiet=True
     )
-
-    # Use vsis3 path for S3 outputs
-    gdal.Translate(to_vsi(outpath), temp_outpath, options=translate_options)
 
     # Clean up temporary file
     import os
@@ -380,10 +381,10 @@ def main():
 
     args = p.parse_args()
 
-    # Validate and set GDAL block size
+    # Validate block size
     try:
         block_size = int(args.block_size)
-        gdal.SetConfigOption("GDAL_TIFF_OVR_BLOCKSIZE", str(block_size))
+        os.environ["GDAL_TIFF_OVR_BLOCKSIZE"] = str(block_size)
     except ValueError:
         log.error(f"Invalid block_size: {args.block_size}. Must be an integer.")
         sys.exit(1)

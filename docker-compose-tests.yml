@@ -30,6 +30,7 @@ services:
       context: .
       dockerfile: Dockerfile.gval
     command: ['python', '-m', 'unittest', 'test.test_make_agreement']
+    working_dir: /app
     volumes:
       - ./agreement_maker:/app
       - ./utils:/app/utils
