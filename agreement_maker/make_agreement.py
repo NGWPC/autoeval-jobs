@@ -1,38 +1,36 @@
 #!/usr/bin/env python3
+import argparse
+import gc
+import json
+import logging
 import os
 import sys
-import argparse
-import logging
 from typing import Tuple
+
+import fsspec
+import geopandas as gpd
+import gval
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 import rasterio
 import rioxarray as rxr
 import xarray as xr
-import gval
-import json
-import gc
-import fsspec
-from fsspec.core import url_to_fs
-from dask.distributed import Client, LocalCluster
 from dask import delayed
-import rasterio
+from dask.distributed import Client, LocalCluster
+from fsspec.core import url_to_fs
 from rasterio.env import Env
+from rio_cogeo.cogeo import cog_translate
+from rio_cogeo.profiles import LZWProfile
+
 from utils.logging import setup_logger
 
-# -----------------------------------------------------------------------------
 # GLOBAL GDAL CONFIGURATION (via rasterio)
-# -----------------------------------------------------------------------------
-import os
 os.environ["GDAL_NUM_THREADS"] = "1"
 os.environ["GDAL_TIFF_DIRECT_IO"] = "YES"
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "TRUE"
 os.environ["CPL_LOG_ERRORS"] = "ON"
 
-# -----------------------------------------------------------------------------
 # GLOBAL DASK CONFIGURATION
-# -----------------------------------------------------------------------------
 DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
 
 
@@ -71,9 +69,7 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
     return client, cluster
 
 
-def load_rasters(
-    candidate_path: str, benchmark_path: str, log: logging.Logger
-) -> Tuple[xr.DataArray, xr.DataArray]:
+def load_rasters(candidate_path: str, benchmark_path: str, log: logging.Logger) -> Tuple[xr.DataArray, xr.DataArray]:
     """Load candidate and benchmark rasters without remapping."""
     log.info(f"Loading candidate raster: {candidate_path}")
     candidate = rxr.open_rasterio(
@@ -121,9 +117,7 @@ def process_clip_geometries(clip_geoms_path: str, log: logging.Logger) -> dict:
     return mask_dict
 
 
-def apply_exclusion_masks(
-    candidate: xr.DataArray, mask_dict: dict, log: logging.Logger
-) -> gpd.GeoDataFrame:
+def apply_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: logging.Logger) -> gpd.GeoDataFrame:
     """Apply exclusion masks and return combined mask geometry."""
     all_masks_df = None
 
@@ -132,11 +126,7 @@ def apply_exclusion_masks(
 
         if operation == "exclude":
             poly_path = mask_dict[poly_layer]["path"]
-            buffer_val = (
-                0
-                if mask_dict[poly_layer]["buffer"] is None
-                else mask_dict[poly_layer]["buffer"]
-            )
+            buffer_val = 0 if mask_dict[poly_layer]["buffer"] is None else mask_dict[poly_layer]["buffer"]
 
             log.info(f"Processing exclusion mask: {poly_layer}")
 
@@ -198,14 +188,10 @@ def compute_agreement_map(
     mask_dict = process_clip_geometries(clip_geoms_path, log)
 
     # Apply exclusion masks
-    all_masks_df = (
-        apply_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
-    )
+    all_masks_df = apply_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
 
     log.info("Homogenizing rasters")
-    c_aligned, b_aligned = candidate.gval.homogenize(
-        benchmark_map=benchmark, target_map="candidate"
-    )
+    c_aligned, b_aligned = candidate.gval.homogenize(benchmark_map=benchmark, target_map="candidate")
 
     # Clean up original rasters
     del candidate, benchmark
@@ -222,7 +208,7 @@ def compute_agreement_map(
     agreement_map = agreement_map.where(~np.isnan(agreement_map), 10)
 
     # Set pairing dictionary as attribute for later use by gval functions
-    agreement_map.attrs['pairing_dictionary'] = pairing_dictionary
+    agreement_map.attrs["pairing_dictionary"] = pairing_dictionary
 
     # Clean up aligned rasters
     del c_aligned, b_aligned
@@ -230,10 +216,10 @@ def compute_agreement_map(
 
     # Keep original agreement map for reference
     agreement_map_og = agreement_map.copy()
-    
+
     # Store original nodata mask before changing nodata value
     original_nodata_mask = agreement_map == 10
-    
+
     # Set nodata to 4 for clipping (clipped areas will become 4)
     agreement_map.rio.write_nodata(4, inplace=True)
 
@@ -245,14 +231,14 @@ def compute_agreement_map(
         # Restore original nodata areas (corners, etc.) to value 10 using coordinate selection
         # This ensures original nodata remains 10, while clipped areas stay 4
         agreement_map.data = xr.where(
-            agreement_map_og.sel({'x': agreement_map.coords['x'], 'y': agreement_map.coords['y']}) == 10,
+            agreement_map_og.sel({"x": agreement_map.coords["x"], "y": agreement_map.coords["y"]}) == 10,
             10,
             agreement_map,
         )
-    
+
     # Preserve the pairing dictionary attribute
-    if hasattr(agreement_map_og, 'attrs') and 'pairing_dictionary' in agreement_map_og.attrs:
-        agreement_map.attrs['pairing_dictionary'] = agreement_map_og.attrs['pairing_dictionary']
+    if hasattr(agreement_map_og, "attrs") and "pairing_dictionary" in agreement_map_og.attrs:
+        agreement_map.attrs["pairing_dictionary"] = agreement_map_og.attrs["pairing_dictionary"]
 
     log.info("Computing crosstab table for metrics")
     crosstab_table = agreement_map.gval.compute_crosstab()
@@ -267,7 +253,7 @@ def compute_agreement_map(
         # Write metrics table using fsspec for S3 compatibility
         with open_file(metrics_path, "wt") as f:
             metrics_table.to_csv(f)
-        
+
         # Clean up metrics table
         del metrics_table
 
@@ -330,28 +316,18 @@ def write_agreement_map(
 
     # Convert to COG using rio-cogeo
     log.info("Converting to Cloud Optimized GeoTIFF")
-    from rio_cogeo.cogeo import cog_translate
-    from rio_cogeo.profiles import LZWProfile
-    
+
     # Configure COG profile
     cog_profile = LZWProfile().data.copy()
-    cog_profile.update({
-        "BLOCKSIZE": 512,
-        "OVERVIEW_RESAMPLING": "nearest",
-    })
-    
-    # Convert to COG
-    cog_translate(
-        temp_outpath,
-        outpath,
-        cog_profile,
-        overview_level=4,
-        overview_resampling="nearest",
-        quiet=True
+    cog_profile.update(
+        {
+            "BLOCKSIZE": 512,
+            "OVERVIEW_RESAMPLING": "nearest",
+        }
     )
 
-    # Clean up temporary file
-    import os
+    # Convert to COG
+    cog_translate(temp_outpath, outpath, cog_profile, overview_level=4, overview_resampling="nearest", quiet=True)
 
     os.remove(temp_outpath)
     log.info("Agreement map write completed")
@@ -415,22 +391,16 @@ def main():
 
     try:
         # Load and preprocess rasters
-        candidate, benchmark = load_rasters(
-            args.candidate_path, args.benchmark_path, log
-        )
+        candidate, benchmark = load_rasters(args.candidate_path, args.benchmark_path, log)
 
         # Compute agreement map
-        agreement_map = compute_agreement_map(
-            candidate, benchmark, args.metrics_path, args.clip_geoms, log
-        )
+        agreement_map = compute_agreement_map(candidate, benchmark, args.metrics_path, args.clip_geoms, log)
 
         # Write agreement map to GeoTIFF
         with rasterio.Env():
             # Set nodata to 10 for writing (following reference implementation)
             agreement_map_write = agreement_map.rio.write_nodata(10, encoded=True)
-            write_agreement_map(
-                agreement_map_write, args.output_path, client, block_size, log
-            )
+            write_agreement_map(agreement_map_write, args.output_path, client, block_size, log)
 
         success_outputs = {"output_path": args.output_path}
         if args.metrics_path:

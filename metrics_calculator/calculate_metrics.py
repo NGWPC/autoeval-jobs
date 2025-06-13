@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-import os
-import sys
 import argparse
 import logging
+import os
+import sys
+
+import fsspec
+import gval
 import pandas as pd
 import rioxarray as rxr
 import xarray as xr
-import gval
-import fsspec
 from fsspec.core import url_to_fs
+
 from utils.logging import setup_logger
 
 # GDAL CONFIGURATION FOR OPTIMAL PERFORMANCE (via environment variables)
@@ -59,17 +61,15 @@ def calculate_metrics(agreement_map_path: str, log: logging.Logger) -> pd.DataFr
 
     log.info("Computing crosstab table from agreement map")
     # Set pairing dictionary as attribute if needed by gval
-    if hasattr(agreement_map, 'attrs'):
-        agreement_map.attrs['pairing_dictionary'] = pairing_dictionary
+    if hasattr(agreement_map, "attrs"):
+        agreement_map.attrs["pairing_dictionary"] = pairing_dictionary
     crosstab_table = agreement_map.gval.compute_crosstab()
 
     log.info("Computing categorical metrics")
     # After computing crosstab from agreement map, use standard binary classification encoding
     # positive_categories=[1] for positive class, negative_categories=[0] for negative class
     metrics_table = crosstab_table.gval.compute_categorical_metrics(
-        positive_categories=[1], 
-        negative_categories=[0], 
-        metrics="all"
+        positive_categories=[1], negative_categories=[0], metrics="all"
     )
 
     return metrics_table
@@ -78,7 +78,7 @@ def calculate_metrics(agreement_map_path: str, log: logging.Logger) -> pd.DataFr
 def write_outputs(metrics_table: pd.DataFrame, metrics_path: str, log: logging.Logger) -> None:
     """Write metrics table to CSV using fsspec for S3 compatibility."""
     log.info(f"Writing metrics table to {metrics_path}")
-    with open_file(metrics_path, 'wt') as f:
+    with open_file(metrics_path, "wt") as f:
         metrics_table.to_csv(f, index=True)
 
 
