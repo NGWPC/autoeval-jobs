@@ -2,6 +2,8 @@
 import os
 import shutil
 import argparse
+import sys
+import logging
 from typing import Any, Dict
 
 import numpy as np
@@ -11,6 +13,7 @@ from rasterio.windows import Window
 import boto3
 import fsspec
 from fsspec.core import url_to_fs
+from utils.logging import setup_logger
 
 
 def open_file(path: str, mode: str = "rb"):
@@ -22,11 +25,14 @@ def open_file(path: str, mode: str = "rb"):
     return fs.open(fs_path, mode)
 
 
+JOB_ID = "hand_inundator"
+
+
 def inundate(
     catchment_parquet: str,
     forecast_path: str,
     output_path: str,
-    geo_mem_cache: int = 512,  # in MB
+    log: logging.Logger,
 ) -> str:
     """
     Generate an inundation map from:
@@ -51,10 +57,12 @@ def inundate(
         )
 
     # Load catchment table from Parquet (via fsspec)
+    log.info(f"Loading catchment data from {catchment_parquet}")
     with open_file(catchment_parquet, "rb") as f:
         catchment_df = pd.read_parquet(f)
 
     # Read forecast CSV (only two columns) using fsspec
+    log.info(f"Loading forecast data from {forecast_path}")
     with open_file(forecast_path, "rt") as f:
         forecast = pd.read_csv(
             f,
@@ -65,6 +73,7 @@ def inundate(
         )
 
     # Build HydroID → stage lookup
+    log.info("Building stage lookup from catchment and forecast data")
     # ensure lake_id is integer
     catchment_df["lake_id"] = catchment_df["lake_id"].astype(int)
     # now filter out lakes (lake_id == -999)
@@ -77,6 +86,8 @@ def inundate(
     )
     if merged.empty:
         raise ValueError("No matching forecast data for catchment features")
+
+    log.info(f"Found {len(merged)} matching catchments with forecast data")
 
     # Interpolate each feature’s forecast discharge onto its lists
     stage_map: Dict[int, float] = {
@@ -93,11 +104,11 @@ def inundate(
     rem_path = catchment_df["rem_raster_path"].iat[0]
     cat_path = catchment_df["catchment_raster_path"].iat[0]
 
+    log.info("Starting inundation mapping")
     # Prepare temporary output
     tmp_tif = "/tmp/temp_inundation.tif"
     config_options = {
-        "GDAL_CACHEMAX": geo_mem_cache,
-        "VSI_CACHE_SIZE": 1024 * 1024 * min(256, geo_mem_cache),
+        "VSI_CACHE_SIZE": 1024 * 1024 * 256,
         "GDAL_DISABLE_READDIR_ON_OPEN": "TRUE",
         "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.vrt",
     }
@@ -149,6 +160,7 @@ def inundate(
 
 
 def main():
+    log = setup_logger(JOB_ID)
     parser = argparse.ArgumentParser(
         description="Inundation mapping from NWM forecasts",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -164,9 +176,6 @@ def main():
     parser.add_argument(
         "--output-path", required=True, help="Where to write .tif (local or s3://)"
     )
-    parser.add_argument(
-        "--geo-mem-cache", type=int, default=512, help="GDAL cache in MB"
-    )
 
     args = parser.parse_args()
 
@@ -175,13 +184,11 @@ def main():
             catchment_parquet=args.catchment_data,
             forecast_path=args.forecast_path,
             output_path=args.output_path,
-            geo_mem_cache=args.geo_mem_cache,
+            log=log,
         )
-        print(f"Successfully wrote: {out}")
+        log.success({"output_path": out})
     except Exception as e:
-        import sys
-
-        print(f"Error: {e}", file=sys.stderr)
+        log.error(f"{JOB_ID} run failed: {e}")
         sys.exit(1)
 
 

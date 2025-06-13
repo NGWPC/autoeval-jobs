@@ -4,6 +4,7 @@ services:
     entrypoint: [ sleep, infinity ]
     volumes:
       - ./fim_mosaicker:/app
+      - ./utils:/app/utils
     environment:
       - AWS_ACCESS_KEY_ID
       - AWS_SECRET_ACCESS_KEY
@@ -16,6 +17,39 @@ services:
     entrypoint: [ sleep, infinity ]
     volumes:
       - ./hand_inundator:/app
+      - ./utils:/app/utils
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    env_file:
+      - .env
+
+  make-agreement-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.gval
+    entrypoint: [ sleep, infinity ]
+    volumes:
+      - ./agreement_maker:/app
+      - ./agreement_maker/test:/test
+      - ./utils:/app/utils
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    env_file:
+      - .env
+
+  calculate-metrics-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.gval
+    entrypoint: [ sleep, infinity ]
+    volumes:
+      - ./metrics_calculator:/app
+      - ./metrics_calculator/test:/test
+      - ./utils:/app/utils
     environment:
       - AWS_ACCESS_KEY_ID
       - AWS_SECRET_ACCESS_KEY

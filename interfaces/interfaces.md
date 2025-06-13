@@ -103,19 +103,17 @@ The mosaic job was implemented the way it was to follow the example of gdal_calc
 
 ## Agreement Maker (`agreement_maker`) 
 
-**Implementation status:  Will be implemented in NGWPC PI-6. The depth FIM functionality will be implemented in FY26.**
+**Implementation status:  Mostly implemented. Depth FIM functionality will be implemented in FY26.**
 
 ### Example command
 
 From inside the agreement-dev container would run:
 
 ```
-python agreement.py --benchmark_path /path/to/raster/ --candidate_path /path/to/raster/ --agreement_path /path/to/agreement/ --clip_geoms /path/to/clipdictionary --fim_type extent 
+python agreement.py ---fim_type extent --benchmark_path /path/to/benchmark_raster.tif --candidate_path /path/to/candidate_raster.tif --output_path /path/to/agreement.tif --metrics_path /path/to/metrics.csv --clip_geoms /path/to/clipdictionary.json --block_size 4096
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments.
-
-**Note on implementation memory usage:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation. If GVAL can't be made to limit its memory usage we will need to pursue a different approach.
 
 ### Description  
 Creates an agreement map showing where a pair of input rasters spatially concur. The job works with depth or extent data with the assumption that a given pair will be either both depths or extents. Produces either a continuous agreement map when the inputs are depths or a categorical agreement map for extents. The resolution of the produced raster will be determined by the lowest resolution raster in the input data.
@@ -125,7 +123,10 @@ Creates an agreement map showing where a pair of input rasters spatially concur.
 
 - **fim_type**
   - Specifies whether agreement is based on spatial 'extent' (agreement between binary categorical rasters) or between rasters with depth values. Influences output raster format.
- 
+
+- **block_size** 
+  - This sets the rioxarray chunk size that will be used by Dask to process the rasters. This is necessary to enable processing of large rasters on memory limited resources. block_size defaults to 4096.
+
 ### Inputs
 - **benchmark_path**:  
   - path to depth or extent raster benchmark data.  
@@ -152,15 +153,15 @@ Creates an agreement map showing where a pair of input rasters spatially concur.
   ```
   
 ### Outputs 
-Output is a single raster 
-- **agreement_path**
-    - See `agreement_maker.yml` for a description of the output raster format for continuous or categorical agreement rasters.
-
+- **output_path**
+    - The output agreement map. See `agreement_maker.yml` for a description of the output raster format for continuous or categorical agreement rasters.
+- **metrics_path**
+  - The path to the metrics csv file that can optionally be written by the job.
 ---
 
 ## HWM Agreement Maker (`hwm_agreement`) 
 
-**Implementation status:  Will be implemented in NGWPC PI-6**
+**Implementation status:  Will be implemented in NGWPC PI-7**
 
 ### Example command
 
@@ -214,34 +215,30 @@ Output is a geopackage of vector information.
 
 ## Metrics Calculator (`metrics_calculator`) 
 
-**Implementation status:  Will be implemented in NGWPC PI-6**
-
-
 ### Example command
 
 From inside the metrics-dev container would run command below:
 
 ```
-python metrics.py --agreement_path /path/to/agreement/ --metrics_path /path/to/metrics/json
+python metrics.py --agreement_map_path /path/to/agreement.tif --metrics_path /path/to/metrics.csv --chunk_size 1024
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments.
-
-**Note on implementation memory usage:** The inundate and mosaicker jobs limit the memory used for raster processing by setting the GDAL_CACHEMAX environment variable. If the rioxarray based GVAL is used for the metrics_calculator job then a different argument or arguments will be needed to constrain the memory usage of the raster handling involved in the metrics calculation. If GVAL can't be made to limit its memory usage we will need to pursue a different approach.
 
 ### Description  
 This job is designed to take an agreement map raster and calculate summary metrics of the agreement of two FIMs over a given ROI.
 
 ### Arguments  
-
-
+- **chunk_size**
+  - This is the windowing size to use. Windowing is used to process large rasters on memory limited machines. This is an optional argument that defaults to 1024 by 1024 chunks.
+  
 ### Input  
 - **agreement_path**
   - Path to an agreement raster over which the metrics will be calculated.
 
 ### Output  
 - **metrics_path**
-  - The output will be a json file containing the metrics the user requested. `metrics_calculator.yml` lists a small subset of possible metrics.
+  - The output will be a csv file containing the metrics the user requested. `metrics_calculator.yml` lists a small subset of possible metrics.
 
 ---
 
@@ -252,7 +249,7 @@ This job is designed to take an agreement map raster and calculate summary metri
 From inside the metrics-dev container would run command below:
 
 ```
-python metrics.py --agreement_path /path/to/agreement/ --metrics_path /path/to/metrics/json
+python metrics.py --agreement_map_path /path/to/agreement.tif --metrics_path /path/to/metrics.csv --chunk_size 1024
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments.
@@ -269,5 +266,5 @@ This job is designed to take an agreement map raster and calculate summary metri
 
 ### Output  
 - **metrics_path**
-  - The output will be a json file containing the metrics the user requested. `metrics_calculator.yml` lists a small subset of possible metrics.
+  - The output will be a csv file containing the metrics the user requested. `metrics_calculator.yml` lists a small subset of possible metrics.
 ---
