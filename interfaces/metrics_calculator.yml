@@ -17,7 +17,7 @@ arguments:
 inputs:
   agreement_map_path:
     title: Raster Agreement Map Path
-    description: Path/URI to the input raster agreement map (GeoTIFF). Pixel values should encode agreement results with encoding 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 10=NoData.
+    description: Path/URI to the input raster agreement map (GeoTIFF). Pixel values should encode agreement results with encoding 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 255=NoData.
     required: true
     schema:
       type: string

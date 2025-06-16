@@ -76,8 +76,9 @@ def inundate(
     log.info("Building stage lookup from catchment and forecast data")
     # ensure lake_id is integer
     catchment_df["lake_id"] = catchment_df["lake_id"].astype(int)
-    # now filter out lakes (lake_id == -999)
-    hydro_df = catchment_df[catchment_df["lake_id"] == -999]
+    # now filter out lakes
+    lake_filter_value = int(os.getenv("LAKE_ID_FILTER_VALUE", "-999"))
+    hydro_df = catchment_df[catchment_df["lake_id"] == lake_filter_value]
     if hydro_df.empty:
         raise ValueError("No catchments with negative lake_id -999 found in Parquet")
 
@@ -107,11 +108,7 @@ def inundate(
     log.info("Starting inundation mapping")
     # Prepare temporary output
     tmp_tif = "/tmp/temp_inundation.tif"
-    config_options = {
-        "VSI_CACHE_SIZE": 1024 * 1024 * 256,
-        "GDAL_DISABLE_READDIR_ON_OPEN": "TRUE",
-        "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.vrt",
-    }
+    config_options = {}
 
     # Raster processing with rasterio.Env
     with rasterio.Env(**config_options):
@@ -120,11 +117,11 @@ def inundate(
             profile.update(
                 dtype="uint8",
                 count=1,
-                nodata=255,
-                compress="lzw",
+                nodata=int(os.getenv("INUNDATION_NODATA_VALUE", "255")),
+                compress=os.getenv("INUNDATION_COMPRESS_TYPE", "lzw"),
                 tiled=True,
-                blockxsize=256,
-                blockysize=256,
+                blockxsize=int(os.getenv("INUNDATION_BLOCK_SIZE", "256")),
+                blockysize=int(os.getenv("INUNDATION_BLOCK_SIZE", "256")),
             )
 
             with rasterio.open(tmp_tif, "w", **profile) as dst:

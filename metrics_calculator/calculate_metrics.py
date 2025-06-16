@@ -12,12 +12,7 @@ import xarray as xr
 from fsspec.core import url_to_fs
 
 from utils.logging import setup_logger
-
-# GDAL CONFIGURATION FOR OPTIMAL PERFORMANCE (via environment variables)
-os.environ["AWS_REGION"] = os.getenv("AWS_REGION", "us-east-1")
-os.environ["CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE"] = "YES"
-os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "YES"
-os.environ["CPL_LOG_ERRORS"] = "ON"
+from utils.pairing import AGREEMENT_PAIRING_DICT
 
 
 JOB_ID = "metrics_calculator"
@@ -38,26 +33,12 @@ def calculate_metrics(agreement_map_path: str, log: logging.Logger) -> pd.DataFr
     agreement_map = rxr.open_rasterio(
         agreement_map_path,
         mask_and_scale=True,
-        chunks={"x": 2048, "y": 2048},
+        chunks={"x": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")), "y": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048"))},
         lock=False,
     )
 
-    # Define pairing dictionary for agreement map interpretation
-    # Agreement map encoding: 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 10=NoData
-    pairing_dictionary = {
-        (0, 0): 0,  # True Negative: both dry
-        (0, 1): 1,  # False Negative: candidate dry, benchmark wet
-        (0, 10): 10,  # NoData
-        (1, 0): 2,  # False Positive: candidate wet, benchmark dry
-        (1, 1): 3,  # True Positive: both wet
-        (1, 10): 10,  # NoData
-        (4, 0): 4,  # Masked
-        (4, 1): 4,  # Masked
-        (4, 10): 10,  # NoData
-        (10, 0): 10,  # NoData
-        (10, 1): 10,  # NoData
-        (10, 10): 10,  # NoData
-    }
+    # Use shared pairing dictionary from utils
+    pairing_dictionary = AGREEMENT_PAIRING_DICT
 
     log.info("Computing crosstab table from agreement map")
     # Set pairing dictionary as attribute if needed by gval
@@ -87,7 +68,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compute metrics from a single agreement map.")
     parser.add_argument("--agreement_map_path", required=True, help="Input path for agreement map raster (local or S3)")
     parser.add_argument("--metrics_path", required=True, help="Output path for metrics CSV (local or S3)")
-    parser.add_argument("--chunk_size", type=int, default=1024, help="Chunk size for processing large rasters")
+    parser.add_argument("--chunk_size", type=int, default=int(os.getenv("DEFAULT_METRICS_CHUNK_SIZE", "1024")), help="Chunk size for processing large rasters")
     args = parser.parse_args()
 
     try:
@@ -106,6 +87,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # example usage local
-    # python calculate_metrics.py --agreement_map_path /test/mock_data/agreement_map.tif --metrics_path /test/mock_data/metrics.csv

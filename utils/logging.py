@@ -5,7 +5,7 @@ import logging
 from pythonjsonlogger import jsonlogger
 
 
-SUCCESS_LEVEL_NUM = 25
+SUCCESS_LEVEL_NUM = int(os.getenv("LOG_SUCCESS_LEVEL_NUM", "25"))
 logging.addLevelName(SUCCESS_LEVEL_NUM, "SUCCESS")
 
 

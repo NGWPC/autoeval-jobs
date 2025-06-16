@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-import unittest
+import json
 import os
 import subprocess
-import rasterio
-import numpy as np
 import sys
+import unittest
 from pathlib import Path
-import json
+
+import numpy as np
+import rasterio
 
 # --- Define project structure relative to this test file ---
 TEST_DIR = Path(__file__).parent.resolve()
@@ -17,7 +18,6 @@ SCRIPT_PATH = PROJECT_ROOT / "make_agreement.py"
 
 
 class TestAgreementScript(unittest.TestCase):
-
     @classmethod
     def setUpClass(cls):
         cls.mock_data_dir = MOCK_DATA_DIR
@@ -32,7 +32,7 @@ class TestAgreementScript(unittest.TestCase):
         cls.benchmark_path = cls.mock_data_dir / "benchmark_raster.tif"
         cls.clip_geoms_path = cls.mock_data_dir / "clip_square.json"
         cls.clip_gpkg_path = cls.mock_data_dir / "clip_square.gpkg"
-        
+
         # Output paths using pathlib
         cls.output_path = cls.mock_data_dir / "agreement_output.tif"
         cls.metrics_path = cls.mock_data_dir / "metrics_output.csv"
@@ -41,12 +41,8 @@ class TestAgreementScript(unittest.TestCase):
         required_files = [cls.candidate_path, cls.benchmark_path, cls.clip_geoms_path]
         missing_files = [p for p in required_files if not p.exists()]
         if missing_files:
-            print(
-                f"\nWARNING: The following test files are missing: {missing_files}"
-            )
-            print(
-                "Run 'make_test_agreement_data.py' in the mock_data directory or ensure they exist."
-            )
+            print(f"\nWARNING: The following test files are missing: {missing_files}")
+            print("Run 'make_test_agreement_data.py' in the mock_data directory or ensure they exist.")
             print("Tests requiring these files may fail or be skipped.")
             cls.input_files_exist = False
         else:
@@ -70,7 +66,7 @@ class TestAgreementScript(unittest.TestCase):
             "extent",
             "--candidate_path",
             str(self.candidate_path),
-            "--benchmark_path", 
+            "--benchmark_path",
             str(self.benchmark_path),
             "--output_path",
             str(self.output_path),
@@ -79,7 +75,7 @@ class TestAgreementScript(unittest.TestCase):
             "--clip_geoms",
             str(self.clip_geoms_path),
             "--block_size",
-            "512"
+            "512",
         ]
 
         # --- Set Environment Variables for subprocess ---
@@ -109,7 +105,7 @@ class TestAgreementScript(unittest.TestCase):
             self.output_path.exists(),
             f"Agreement output file was not created at {self.output_path}",
         )
-        
+
         self.assertTrue(
             self.metrics_path.exists(),
             f"Metrics output file was not created at {self.metrics_path}",
@@ -125,11 +121,11 @@ class TestAgreementScript(unittest.TestCase):
                     f"Expected numeric data type for extent, got {src.dtypes[0]}",
                 )
 
-                # Check nodata value (10 for agreement maps)
+                # Check nodata value (255 for agreement maps)
                 self.assertEqual(
                     src.nodata,
-                    10,
-                    f"Expected 10 nodata value for agreement, got {src.nodata}",
+                    255,
+                    f"Expected 255 nodata value for agreement, got {src.nodata}",
                 )
 
                 # Check that data exists
@@ -146,7 +142,7 @@ class TestAgreementScript(unittest.TestCase):
                     valid_data = data[valid_data_mask]
                     unique_values = np.unique(valid_data)
                     expected_values = {0, 1, 2, 3, 4}  # TN, FN, FP, TP, Masked
-                    
+
                     # Check that all values are in expected set
                     unexpected_values = set(unique_values) - expected_values
                     self.assertEqual(
@@ -154,7 +150,7 @@ class TestAgreementScript(unittest.TestCase):
                         0,
                         f"Agreement raster contains unexpected values: {unexpected_values}. Expected: {expected_values}",
                     )
-                    
+
                     # Check that we have different agreement types (should have TN, FN, FP, TP based on test data)
                     self.assertGreater(
                         len(unique_values),
@@ -170,9 +166,7 @@ class TestAgreementScript(unittest.TestCase):
                     )
 
         except rasterio.RasterioIOError as e:
-            self.fail(
-                f"Failed to open or read the output raster file: {self.output_path}. Error: {e}"
-            )
+            self.fail(f"Failed to open or read the output raster file: {self.output_path}. Error: {e}")
 
     def test_agreement_creation_no_clip(self):
         """Tests agreement creation without clipping."""
@@ -181,7 +175,7 @@ class TestAgreementScript(unittest.TestCase):
 
         # Use different output path
         output_path_no_clip = self.mock_data_dir / "agreement_output_no_clip.tif"
-        
+
         # Remove output file if it exists
         if output_path_no_clip.exists():
             output_path_no_clip.unlink()
@@ -193,12 +187,12 @@ class TestAgreementScript(unittest.TestCase):
             "extent",
             "--candidate_path",
             str(self.candidate_path),
-            "--benchmark_path", 
+            "--benchmark_path",
             str(self.benchmark_path),
             "--output_path",
             str(output_path_no_clip),
             "--block_size",
-            "512"
+            "512",
         ]
 
         # --- Set Environment Variables for subprocess ---
@@ -236,7 +230,7 @@ class TestAgreementScript(unittest.TestCase):
                 if np.any(valid_data_mask):
                     valid_data = data[valid_data_mask]
                     unique_values = np.unique(valid_data)
-                    
+
                     # Should not contain masked values (4) when no clipping
                     self.assertNotIn(
                         4,
@@ -245,9 +239,7 @@ class TestAgreementScript(unittest.TestCase):
                     )
 
         except rasterio.RasterioIOError as e:
-            self.fail(
-                f"Failed to open or read the output raster file: {output_path_no_clip}. Error: {e}"
-            )
+            self.fail(f"Failed to open or read the output raster file: {output_path_no_clip}. Error: {e}")
 
 
 if __name__ == "__main__":

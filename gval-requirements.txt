@@ -1,5 +1,6 @@
 rioxarray>=0.13.4
 dask[distributed]>=2023.5.0,<2025
+dask[dataframe]
 pandera==0.22.1
 shapely==2.0.1
 geocube>=0.3.3

@@ -55,7 +55,7 @@ inputs:
 outputs:
   output_path:
     title: Agreement Raster Path
-    description: Path for the output agreement raster map (GeoTIFF) in Cloud Optimized GeoTIFF format. Agreement map encoding - 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 10=NoData.
+    description: Path for the output agreement raster map (GeoTIFF) in Cloud Optimized GeoTIFF format. Agreement map encoding - 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 255=NoData.
     schema:
       oneOf:
         - title: Extent Agreement Raster
@@ -69,7 +69,7 @@ outputs:
             dtype:
               const: uint8
             nodata:
-              const: 10
+              const: 255
             format:
               const: COG
           when:

@@ -21,15 +21,8 @@ from osgeo_utils.auxiliary.rectangle import GeoRectangle
 from osgeo_utils.auxiliary.util import open_ds
 from utils.logging import setup_logger
 
-# GDAL / AWS S3 CONFIGURATION
-gdal.SetConfigOption("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
-gdal.SetConfigOption("AWS_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY"))
-gdal.SetConfigOption("AWS_SESSION_TOKEN", os.getenv("AWS_SESSION_TOKEN"))
-gdal.SetConfigOption("AWS_REGION", os.getenv("AWS_REGION", "us-east-1"))
-gdal.SetConfigOption("CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE", "YES")
-gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES")
+# Enable GDAL exceptions
 gdal.UseExceptions()
-gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
 
 
 def to_vsi(path: str) -> str:
@@ -189,10 +182,10 @@ def mosaic_blocks(
         dtype,
         options=[
             "TILED=YES",
-            "BLOCKXSIZE=512",
-            "BLOCKYSIZE=512",
-            "COMPRESS=LZW",
-            "PREDICTOR=2",
+            f"BLOCKXSIZE={os.getenv('MOSAIC_BLOCK_SIZE', '512')}",
+            f"BLOCKYSIZE={os.getenv('MOSAIC_BLOCK_SIZE', '512')}",
+            f"COMPRESS={os.getenv('MOSAIC_COMPRESS_TYPE', 'LZW')}",
+            f"PREDICTOR={os.getenv('MOSAIC_PREDICTOR', '2')}",
             "BIGTIFF=IF_SAFER",
         ],
     )
@@ -367,9 +360,9 @@ def main():
 
         # choose output type
         if args.fim_type == "extent":
-            dtype, nodata = gdal.GDT_Byte, 255
+            dtype, nodata = gdal.GDT_Byte, int(os.getenv("EXTENT_NODATA_VALUE", "255"))
         else:
-            dtype, nodata = gdal.GDT_Float32, -9999
+            dtype, nodata = gdal.GDT_Float32, float(os.getenv("DEPTH_NODATA_VALUE", "-9999"))
 
         tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
 

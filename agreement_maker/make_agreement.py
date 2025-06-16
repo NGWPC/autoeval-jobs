@@ -4,7 +4,9 @@ import gc
 import json
 import logging
 import os
+import shutil
 import sys
+import tempfile
 from typing import Tuple
 
 import fsspec
@@ -19,16 +21,12 @@ from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
 from rasterio.env import Env
+from rasterio import features
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import LZWProfile
 
 from utils.logging import setup_logger
-
-# GLOBAL GDAL CONFIGURATION (via rasterio)
-os.environ["GDAL_NUM_THREADS"] = "1"
-os.environ["GDAL_TIFF_DIRECT_IO"] = "YES"
-os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "TRUE"
-os.environ["CPL_LOG_ERRORS"] = "ON"
+from utils.pairing import AGREEMENT_PAIRING_DICT
 
 # GLOBAL DASK CONFIGURATION
 DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
@@ -75,23 +73,24 @@ def load_rasters(candidate_path: str, benchmark_path: str, log: logging.Logger) 
     candidate = rxr.open_rasterio(
         candidate_path,
         mask_and_scale=True,
-        chunks={"x": 2048, "y": 2048},
+        chunks={"x": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")), "y": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048"))},
         lock=False,
     )
     log.info(f"Loading benchmark raster: {benchmark_path}")
     benchmark = rxr.open_rasterio(
         benchmark_path,
         mask_and_scale=True,
-        chunks={"x": 2048, "y": 2048},
+        chunks={"x": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")), "y": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048"))},
         lock=False,
     )
 
-    # Handle nodata values by converting them to a consistent nodata value (10)
+    # Handle nodata values by converting them to a consistent nodata value (255)
     log.info("Processing nodata values")
-    candidate.data = xr.where(candidate == candidate.rio.nodata, 10, candidate)
-    candidate = candidate.rio.write_nodata(10)
-    benchmark.data = xr.where(benchmark == benchmark.rio.nodata, 10, benchmark)
-    benchmark = benchmark.rio.write_nodata(10)
+    nodata_value = int(os.getenv("EXTENT_NODATA_VALUE", "255"))
+    candidate.data = xr.where(candidate == candidate.rio.nodata, nodata_value, candidate)
+    candidate = candidate.rio.write_nodata(nodata_value)
+    benchmark.data = xr.where(benchmark == benchmark.rio.nodata, nodata_value, benchmark)
+    benchmark = benchmark.rio.write_nodata(nodata_value)
 
     return candidate, benchmark
 
@@ -110,7 +109,7 @@ def process_clip_geometries(clip_geoms_path: str, log: logging.Logger) -> dict:
     for i, geom_path in enumerate(clip_geoms):
         mask_dict[f"clip_layer_{i}"] = {
             "path": geom_path,
-            "operation": "exclude",  # Default to exclude operation
+            "operation": os.getenv("DEFAULT_CLIP_OPERATION", "exclude"),
             "buffer": None,
         }
 
@@ -167,22 +166,8 @@ def compute_agreement_map(
 ) -> xr.DataArray:
     """Compute the agreement map between candidate and benchmark rasters using pairing dictionary."""
 
-    # Define pairing dictionary for binary rasters (0=dry, 1=wet, 10=nodata)
-    # Agreement map encoding: 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 10=NoData
-    pairing_dictionary = {
-        (0, 0): 0,  # True Negative: both dry
-        (0, 1): 1,  # False Negative: candidate dry, benchmark wet
-        (0, 10): 10,  # NoData
-        (1, 0): 2,  # False Positive: candidate wet, benchmark dry
-        (1, 1): 3,  # True Positive: both wet
-        (1, 10): 10,  # NoData
-        (4, 0): 4,  # Masked
-        (4, 1): 4,  # Masked
-        (4, 10): 10,  # NoData
-        (10, 0): 10,  # NoData
-        (10, 1): 10,  # NoData
-        (10, 10): 10,  # NoData
-    }
+    # Use shared pairing dictionary from utils
+    pairing_dictionary = AGREEMENT_PAIRING_DICT
 
     # Process clip geometries if provided
     mask_dict = process_clip_geometries(clip_geoms_path, log)
@@ -204,8 +189,8 @@ def compute_agreement_map(
         pairing_dict=pairing_dictionary,
     )
 
-    # Convert nan values to 10 (nodata) to match our encoding
-    agreement_map = agreement_map.where(~np.isnan(agreement_map), 10)
+    # Cast any NaNs reintroduced by gval.compute_agreement_map to nodata
+    agreement_map = agreement_map.where(~np.isnan(agreement_map), 255)
 
     # Set pairing dictionary as attribute for later use by gval functions
     agreement_map.attrs["pairing_dictionary"] = pairing_dictionary
@@ -214,31 +199,32 @@ def compute_agreement_map(
     del c_aligned, b_aligned
     gc.collect()
 
-    # Keep original agreement map for reference
-    agreement_map_og = agreement_map.copy()
-
-    # Store original nodata mask before changing nodata value
-    original_nodata_mask = agreement_map == 10
-
-    # Set nodata to 4 for clipping (clipped areas will become 4)
-    agreement_map.rio.write_nodata(4, inplace=True)
-
     # Apply masking if exclusion masks are present
     if all_masks_df is not None:
         log.info("Applying exclusion masks to agreement map")
-        # Clip the agreement map (clipped areas become nodata value 4)
-        agreement_map = agreement_map.rio.clip(all_masks_df["geometry"], invert=True)
-        # Restore original nodata areas (corners, etc.) to value 10 using coordinate selection
-        # This ensures original nodata remains 10, while clipped areas stay 4
-        agreement_map.data = xr.where(
-            agreement_map_og.sel({"x": agreement_map.coords["x"], "y": agreement_map.coords["y"]}) == 10,
-            10,
-            agreement_map,
+        
+        # Get the transform and shape from the agreement map
+        transform = agreement_map.rio.transform()
+        height = agreement_map.rio.height
+        width = agreement_map.rio.width
+        
+        # Rasterize the exclusion geometries to create a mask
+        # Areas inside geometries will have value 1, outside will be 0
+        mask_raster = features.rasterize(
+            shapes=[(geom, 1) for geom in all_masks_df.geometry],
+            out_shape=(height, width),
+            transform=transform,
+            fill=0,
+            dtype='uint8'
         )
-
-    # Preserve the pairing dictionary attribute
-    if hasattr(agreement_map_og, "attrs") and "pairing_dictionary" in agreement_map_og.attrs:
-        agreement_map.attrs["pairing_dictionary"] = agreement_map_og.attrs["pairing_dictionary"]
+        
+        # Update agreement map: set excluded areas (mask==1) to value 4
+        # but preserve original nodata values (255)
+        agreement_map.data = xr.where(
+            (mask_raster == 1) & (agreement_map != 255),
+            4,  # Set to masked value
+            agreement_map  # Keep original value
+        )
 
     log.info("Computing crosstab table for metrics")
     crosstab_table = agreement_map.gval.compute_crosstab()
@@ -273,64 +259,91 @@ def write_agreement_map(
 ) -> None:
     log.info(f"Writing agreement map to {outpath}")
 
-    # Create temporary output path for initial write
-    temp_outpath = outpath + "_temp.tif"
+    # Create temporary output paths for local work
+    temp_fd, temp_tiff_path = tempfile.mkstemp(suffix="_temp.tif")
+    os.close(temp_fd)
 
-    # use rasterio to write agreement map (better for large rasters)
-    tasks = []
-    output_profile = {
-        "driver": "GTiff",
-        "height": agreement_map.rio.height,
-        "width": agreement_map.rio.width,
-        "count": 1,
-        "dtype": agreement_map.dtype,
-        "crs": agreement_map.rio.crs,
-        "transform": agreement_map.rio.transform(),
-        "compress": "LZW",
-        "tiled": True,
-        "blockxsize": block_size,
-        "blockysize": block_size,
-        "nodata": 10,  # Updated nodata value
-    }
+    temp_fd, temp_cog_path = tempfile.mkstemp(suffix="_cog.tif")
+    os.close(temp_fd)
 
-    # Write data block by block
-    with rasterio.open(temp_outpath, "w", **output_profile) as dst:
-        for ij, window in dst.block_windows(1):
-            i, j = ij
-
-            @delayed
-            def write_window(win, ii, jj):
-                block = agreement_map.isel(
-                    x=slice(win.col_off, win.col_off + win.width),
-                    y=slice(win.row_off, win.row_off + win.height),
-                ).compute()  # only compute this block!
-
-                arr2d = np.squeeze(block.values).astype("uint8")
-                with rasterio.open(temp_outpath, "r+") as d:
-                    d.write(arr2d, 1, window=win)
-                return True
-
-            tasks.append(write_window(window, i, j))
-
-    client.compute(tasks, sync=True)
-
-    # Convert to COG using rio-cogeo
-    log.info("Converting to Cloud Optimized GeoTIFF")
-
-    # Configure COG profile
-    cog_profile = LZWProfile().data.copy()
-    cog_profile.update(
-        {
-            "BLOCKSIZE": 512,
-            "OVERVIEW_RESAMPLING": "nearest",
+    try:
+        # use rasterio to write agreement map (better for large rasters)
+        tasks = []
+        output_profile = {
+            "driver": "GTiff",
+            "height": agreement_map.rio.height,
+            "width": agreement_map.rio.width,
+            "count": 1,
+            "dtype": agreement_map.dtype,
+            "crs": agreement_map.rio.crs,
+            "transform": agreement_map.rio.transform(),
+            "compress": "LZW",
+            "tiled": True,
+            "blockxsize": block_size,
+            "blockysize": block_size,
+            "nodata": 255,  # Updated nodata value
         }
-    )
 
-    # Convert to COG
-    cog_translate(temp_outpath, outpath, cog_profile, overview_level=4, overview_resampling="nearest", quiet=True)
+        # Write data block by block
+        with rasterio.open(temp_tiff_path, "w", **output_profile) as dst:
+            for ij, window in dst.block_windows(1):
+                i, j = ij
 
-    os.remove(temp_outpath)
-    log.info("Agreement map write completed")
+                @delayed
+                def write_window(win, ii, jj):
+                    block = agreement_map.isel(
+                        x=slice(win.col_off, win.col_off + win.width),
+                        y=slice(win.row_off, win.row_off + win.height),
+                    ).compute()  # only compute this block!
+
+                    arr2d = np.squeeze(block.values).astype("uint8")
+                    with rasterio.open(temp_tiff_path, "r+") as d:
+                        d.write(arr2d, 1, window=win)
+                    return True
+
+                tasks.append(write_window(window, i, j))
+
+        client.compute(tasks, sync=True)
+
+        # Convert to COG locally
+        log.info("Converting to Cloud Optimized GeoTIFF")
+
+        # Configure COG profile
+        cog_profile = LZWProfile().data.copy()
+        cog_profile.update(
+            {
+                "BLOCKSIZE": int(os.getenv("COG_BLOCKSIZE", "512")),
+                "OVERVIEW_RESAMPLING": "nearest",
+            }
+        )
+
+        # Writing cog to a tempfile and then uploading to fsspec in one go to avoid needing to use delete object privilages (nomad clients won't have that)
+        cog_translate(
+            temp_tiff_path,
+            temp_cog_path,
+            cog_profile,
+            overview_level=int(os.getenv("COG_OVERVIEW_LEVEL", "4")),
+            overview_resampling="nearest",
+            quiet=True,
+        )
+
+        # Upload to S3 if output path is S3, otherwise just move the file
+        if outpath.startswith("s3://"):
+            log.info(f"Uploading COG to S3: {outpath}")
+            fs, fs_path = url_to_fs(outpath)
+            fs.put_file(temp_cog_path, fs_path)
+        else:
+            # For local output, just move the file
+            shutil.move(temp_cog_path, outpath)
+
+        log.info("Agreement map write completed")
+
+    finally:
+        # Clean up temporary files
+        if os.path.exists(temp_tiff_path):
+            os.remove(temp_tiff_path)
+        if os.path.exists(temp_cog_path):
+            os.remove(temp_cog_path)
 
 
 def main():
@@ -372,7 +385,7 @@ def main():
     p.add_argument(
         "--block_size",
         required=False,
-        default="4096",
+        default=os.getenv("DEFAULT_WRITE_BLOCK_SIZE", "4096"),
         help="Block size for writing agreement raster. Default is 4096.",
     )
 
@@ -398,8 +411,8 @@ def main():
 
         # Write agreement map to GeoTIFF
         with rasterio.Env():
-            # Set nodata to 10 for writing (following reference implementation)
-            agreement_map_write = agreement_map.rio.write_nodata(10, encoded=True)
+            # Set nodata to 255 for writing (following reference implementation)
+            agreement_map_write = agreement_map.rio.write_nodata(255, encoded=True)
             write_agreement_map(agreement_map_write, args.output_path, client, block_size, log)
 
         success_outputs = {"output_path": args.output_path}
