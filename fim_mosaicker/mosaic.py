@@ -19,17 +19,10 @@ from osgeo_utils.auxiliary import extent_util
 from osgeo_utils.auxiliary.extent_util import Extent, GeoTransform
 from osgeo_utils.auxiliary.rectangle import GeoRectangle
 from osgeo_utils.auxiliary.util import open_ds
-from pythonjsonlogger import jsonlogger
+from utils.logging import setup_logger
 
-# GDAL / AWS S3 CONFIGURATION
-gdal.SetConfigOption("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
-gdal.SetConfigOption("AWS_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY"))
-gdal.SetConfigOption("AWS_SESSION_TOKEN", os.getenv("AWS_SESSION_TOKEN"))
-gdal.SetConfigOption("AWS_REGION", os.getenv("AWS_REGION", "us-east-1"))
-gdal.SetConfigOption("CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE", "YES")
-gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES")
+# Enable GDAL exceptions
 gdal.UseExceptions()
-gdal.SetConfigOption("CPL_LOG_ERRORS", "ON")
 
 
 def to_vsi(path: str) -> str:
@@ -41,59 +34,7 @@ def to_vsi(path: str) -> str:
     return path
 
 
-SUCCESS_LEVEL_NUM = 25
-logging.addLevelName(SUCCESS_LEVEL_NUM, "SUCCESS")
-
-
-def success(self, message=None, **kwargs):
-    """
-    Custom log level for SUCCESS events. If everything goes well this should be the last messaged logged from the job.
-    """
-    if self.isEnabledFor(SUCCESS_LEVEL_NUM):
-        self._log(SUCCESS_LEVEL_NUM, message, (), **kwargs)
-
-
-logging.Logger.success = success
-
 JOB_ID = "fim_mosaicker"
-
-
-class JobIDFilter(logging.Filter):
-    def filter(self, record):
-        record.job_id = JOB_ID
-        return True
-
-
-def setup_logger() -> logging.Logger:
-    """
-    Initialize a JSON-format logger that conforms to the log conventions specified in job_conventions.md.
-    """
-    log = logging.getLogger(JOB_ID)
-    if log.handlers:
-        return log
-
-    log.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
-    handler = logging.StreamHandler(sys.stderr)
-    handler.addFilter(JobIDFilter())
-
-    fmt = "%(asctime)s %(levelname)s %(job_id)s %(message)s"
-    handler.setFormatter(
-        jsonlogger.JsonFormatter(
-            fmt=fmt,
-            datefmt="%Y-%m-%dT%H:%M:%S.%fZ",
-            rename_fields={
-                "asctime": "timestamp",
-                "levelname": "level",
-                # job_id stays as-is
-                # message stays as-is
-            },
-            json_ensure_ascii=False,
-        )
-    )
-
-    log.addHandler(handler)
-    log.propagate = False
-    return log
 
 
 @dataclass
@@ -241,10 +182,10 @@ def mosaic_blocks(
         dtype,
         options=[
             "TILED=YES",
-            "BLOCKXSIZE=512",
-            "BLOCKYSIZE=512",
-            "COMPRESS=LZW",
-            "PREDICTOR=2",
+            f"BLOCKXSIZE={os.getenv('MOSAIC_BLOCK_SIZE', '512')}",
+            f"BLOCKYSIZE={os.getenv('MOSAIC_BLOCK_SIZE', '512')}",
+            f"COMPRESS={os.getenv('MOSAIC_COMPRESS_TYPE', 'LZW')}",
+            f"PREDICTOR={os.getenv('MOSAIC_PREDICTOR', '2')}",
             "BIGTIFF=IF_SAFER",
         ],
     )
@@ -381,7 +322,7 @@ def main():
             --clip_geometry_path ./aoi.geojson \\
             --fim_type depth
     """
-    log = setup_logger()
+    log = setup_logger(JOB_ID)
     p = argparse.ArgumentParser()
     p.add_argument(
         "--raster_paths",
@@ -419,9 +360,9 @@ def main():
 
         # choose output type
         if args.fim_type == "extent":
-            dtype, nodata = gdal.GDT_Byte, 255
+            dtype, nodata = gdal.GDT_Byte, int(os.getenv("EXTENT_NODATA_VALUE", "255"))
         else:
-            dtype, nodata = gdal.GDT_Float32, -9999
+            dtype, nodata = gdal.GDT_Float32, float(os.getenv("DEPTH_NODATA_VALUE", "-9999"))
 
         tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
 

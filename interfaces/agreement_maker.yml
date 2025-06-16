@@ -11,6 +11,14 @@ arguments:
       type: string
       enum: [extent, depth]
       default: extent
+  block_size:
+    title: Block Size for Writing
+    description: Block size for writing agreement raster. Affects memory usage and I/O performance.
+    schema:
+      type: integer
+      default: 4096
+      minimum: 256
+      maximum: 8192
 
 inputs:
   benchmark_path:
@@ -45,13 +53,13 @@ inputs:
       contentMediaType: application/json
 
 outputs:
-  agreement_path:
+  output_path:
     title: Agreement Raster Path
-    description: Path for the output agreement raster map (GeoTIFF) in EPSG:5070. Raster properties depend on the 'fim_type' argument.
+    description: Path for the output agreement raster map (GeoTIFF) in Cloud Optimized GeoTIFF format. Agreement map encoding - 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 255=NoData.
     schema:
       oneOf:
         - title: Extent Agreement Raster
-          description: Output for fim_type 'extent'. Binary agreement (0=NoData/NoFlood, 1=Agree, potentially others depending on implementation logic).
+          description: Output for fim_type 'extent'. Binary agreement using pairing dictionary with encoding 0=TN, 1=FN, 2=FP, 3=TP, 4=Masked, 10=NoData.
           type: string
           format: uri
           contentMediaType: image/tiff; application=geotiff
@@ -62,12 +70,14 @@ outputs:
               const: uint8
             nodata:
               const: 255
+            format:
+              const: COG
           when:
             properties:
               fim_type:
                 const: extent
         - title: Depth Agreement Raster
-          description: Output for fim_type 'depth'. Represents agreement based on depth values (e.g., difference, ratio, classification).
+          description: Output for fim_type 'depth'. Depth-based agreement (planned future implementation).
           type: string
           format: uri
           contentMediaType: image/tiff; application=geotiff
@@ -78,7 +88,17 @@ outputs:
               const: float32
             nodata:
               const: -9999
+            format:
+              const: COG
           when:
             properties:
               fim_type:
                 const: depth
+  metrics_path:
+    title: Metrics Table Path
+    description: Optional path for the output metrics table (CSV) containing categorical validation metrics computed from the agreement map.
+    required: false
+    schema:
+      type: string
+      format: uri
+      contentMediaType: text/csv
