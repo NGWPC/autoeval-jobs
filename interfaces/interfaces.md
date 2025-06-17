@@ -15,7 +15,7 @@ By convention when outputs are listed for a job it is assumed that these outputs
 From inside the inundate-dev container would run:
 
 ```
-python inundate.py --catchment_data_path /path/to/catchment/json/ --forecast_path /path/to/forecast/ --fim_output_path /path/to/output/ --fim_type extent
+python inundate.py --catchment_data_path /path/to/catchment.parquet --forecast_path /path/to/forecast.csv --fim_output_path /path/to/output.tif --fim_type extent
 ```
 
 This example lists all possible arguments. See yaml files for optional vs required arguments.
