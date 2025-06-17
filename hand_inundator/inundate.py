@@ -45,12 +45,10 @@ def inundate(
     Writes a uint8 flooded/dry mask to `output_path` (local or s3://).
     """
 
-    # Load catchment table from Parquet (via fsspec)
     log.info(f"Loading catchment data from {catchment_parquet}")
     with open_file(catchment_parquet, "rb") as f:
         catchment_df = pd.read_parquet(f)
 
-    # Read forecast CSV (only two columns) using fsspec
     log.info(f"Loading forecast data from {forecast_path}")
     with open_file(forecast_path, "rt") as f:
         forecast = pd.read_csv(
@@ -63,7 +61,6 @@ def inundate(
 
     # Build HydroID → stage lookup
     log.info("Building stage lookup from catchment and forecast data")
-    # ensure lake_id is integer
     catchment_df["LakeID"] = catchment_df["LakeID"].astype(int)
     # now filter out lakes
     lake_filter_value = int(os.getenv("LAKE_ID_FILTER_VALUE", "-999"))
@@ -93,15 +90,12 @@ def inundate(
     cat_path = catchment_df["catchment_raster_path"].iat[0]
 
     log.info("Starting inundation mapping")
-    # Prepare temporary output
     tmp_tif = "/tmp/temp_inundation.tif"
-    config_options = {}
 
-    # Raster processing with rasterio.Env
-    with rasterio.Env(**config_options):
+    with rasterio.Env():
         with rasterio.open(rem_path) as rem, rasterio.open(cat_path) as cat:
             profile = rem.profile.copy()
-            
+
             # Set profile based on fim_type
             if fim_type == "depth":
                 profile.update(
@@ -131,9 +125,8 @@ def inundate(
                     rem_win = rem.read(1, window=window, out_dtype=np.float32, masked=True)
                     cat_win = cat.read(1, window=window, out_dtype=np.int32)
 
-                    # Initialize with zeros for both types
                     result = np.zeros(rem_win.shape, dtype=output_dtype)
-                    
+
                     # rem_win is a MaskedArray when read with masked=True
                     valid = ~rem_win.mask
                     if valid.any():
@@ -142,7 +135,7 @@ def inundate(
                                 stg = stage_map[uid]
                                 # Find inundated pixels for this catchment
                                 mask = (cat_win == uid) & valid & (rem_win.data <= stg)
-                                
+
                                 if fim_type == "depth":
                                     # Calculate depth: stage - REM
                                     result[mask] = stg - rem_win.data[mask]
