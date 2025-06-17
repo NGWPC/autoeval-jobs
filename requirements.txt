@@ -1,6 +1,8 @@
 boto3==1.38.17
-fsspec==2025.3.2
+fsspec==2025.5.1
 numpy<2
 pandas==2.2.3
+pyarrow==20.0.0
 python-json-logger==3.3.0
 rasterio==1.4.3
+s3fs==2025.5.1
