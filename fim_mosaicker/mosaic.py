@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-import os
-import sys
 import argparse
 import gc
-import tempfile
-import shutil
 import json
 import logging
-
-from pathlib import Path
+import os
+import shutil
+import sys
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Tuple
 
-import numpy as np
 import fsspec
+import numpy as np
 from osgeo import gdal, gdal_array
 from osgeo_utils.auxiliary import extent_util
 from osgeo_utils.auxiliary.extent_util import Extent, GeoTransform
 from osgeo_utils.auxiliary.rectangle import GeoRectangle
 from osgeo_utils.auxiliary.util import open_ds
+
 from utils.logging import setup_logger
 
 # Enable GDAL exceptions
@@ -81,9 +81,7 @@ def load_rasters(paths: List[str], log: logging.Logger) -> List[RasterInfo]:
     return recs
 
 
-def pick_target_grid(
-    srcs: List[RasterInfo], log: logging.Logger
-) -> Tuple[GeoTransform, Tuple[int, int], str]:
+def pick_target_grid(srcs: List[RasterInfo], log: logging.Logger) -> Tuple[GeoTransform, Tuple[int, int], str]:
     """
     Finds the lowest resolution raster and picks that as the resolution to project to.
     Determines the bounds of the final mosaic. Also, uses the projection of the lowest
@@ -95,9 +93,7 @@ def pick_target_grid(
 
     gts = [r.gt for r in srcs]
     dims_list = [r.dims for r in srcs]
-    _, _, rect = extent_util.calc_geotransform_and_dimensions(
-        gts, dims_list, input_extent=Extent.UNION
-    )
+    _, _, rect = extent_util.calc_geotransform_and_dimensions(gts, dims_list, input_extent=Extent.UNION)
     if not isinstance(rect, GeoRectangle):
         raise RuntimeError("Invalid union extent")
 
@@ -173,9 +169,11 @@ def mosaic_blocks(
     Numpy arrays to keep things performant. This approach supports mosaicing many, large
     rasters as long as the input rasters are tiled.
     """
-    drv = gdal.GetDriverByName("GTiff")
-    ds = drv.Create(
-        to_vsi(outpath),
+    # Create with GTiff driver first, then convert to COG
+    gtiff_drv = gdal.GetDriverByName("GTiff")
+    temp_gtiff = outpath.replace(".tif", "_temp.tif")
+    ds = gtiff_drv.Create(
+        temp_gtiff,
         dims[0],
         dims[1],
         1,
@@ -254,28 +252,19 @@ def mosaic_blocks(
                 log.debug(f"Block {block_count}/{total_blocks}")
 
     ds.FlushCache()
-    return ds
+    ds = None  # Close the GTiff
 
+    # Convert GTiff to COG
+    log.info(f"Converting GTiff to COG: {outpath}")
+    cog_drv = gdal.GetDriverByName("COG")
+    src_ds = gdal.Open(temp_gtiff, gdal.GA_ReadOnly)
+    cog_ds = cog_drv.CreateCopy(outpath, src_ds, strict=0, options=["COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
+    src_ds = None
 
-def build_overviews(ds: gdal.Dataset, log: logging.Logger):
-    """
-    Create COG overviews for the final output mosaic.
-    """
-    ds = gdal.Open(ds.GetDescription(), gdal.GA_Update)
-    band = ds.GetRasterBand(1)
-    size = min(ds.RasterXSize, ds.RasterYSize)
-    bx, by = band.GetBlockSize()
+    # Clean up temp file
+    os.remove(temp_gtiff)
 
-    levels = []
-    lvl = 2
-    while (size / lvl) >= max(bx, by):
-        levels.append(lvl)
-        lvl *= 2
-
-    if levels:
-        log.info(f"Building overviews: {levels}")
-        ds.BuildOverviews("NEAREST", levels)
-    ds = None
+    return cog_ds
 
 
 def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
@@ -289,13 +278,13 @@ def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
         tmp,
         src,
         options=gdal.WarpOptions(
-            format="GTiff",
+            format="COG",
             cutlineDSName=to_vsi(clip_path),
             cutlineLayer="",
             cropToCutline=False,
             dstNodata=nodata,
             multithread=True,
-            creationOptions=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"],
+            creationOptions=["COMPRESS=LZW", "BIGTIFF=IF_SAFER"],
         ),
     )
     shutil.move(tmp, src)
@@ -368,7 +357,6 @@ def main():
 
         # do the merge
         out_ds = mosaic_blocks(aligned_ds, tmp_out, gt, dims, crs, dtype, nodata, log)
-        build_overviews(out_ds, log)
         out_ds.FlushCache()
         out_ds = None
         gc.collect()
@@ -379,9 +367,7 @@ def main():
 
         # push via fsspec
         log.info(f"Pushing temp COG → {args.mosaic_output_path}")
-        with open(tmp_out, "rb") as ifp, fsspec.open(
-            args.mosaic_output_path, "wb"
-        ) as ofp:
+        with open(tmp_out, "rb") as ifp, fsspec.open(args.mosaic_output_path, "wb") as ofp:
             shutil.copyfileobj(ifp, ofp)
         os.remove(tmp_out)
 
