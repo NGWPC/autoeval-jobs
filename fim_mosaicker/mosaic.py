@@ -332,9 +332,10 @@ def main():
         # load raster paths
         input_rp = args.raster_paths
         if len(input_rp) == 1 and os.path.isdir(input_rp[0]):
-            # a directory: grab all files in it
-            paths = [str(p) for p in Path(input_rp[0]).iterdir() if p.is_file()]
-            log.info(f"Found {len(paths)} files in raster path directory {input_rp}")
+            raster_extensions = {".tif", ".tiff", ".vrt", ".img", ".hdf", ".nc", ".netcdf"}
+            all_files = list(Path(input_rp[0]).iterdir())
+            paths = [str(p) for p in all_files if p.is_file() and p.suffix.lower() in raster_extensions]
+            log.info(f"Found {len(paths)} raster files (out of {len(all_files)} total) in directory {input_rp}")
         else:
             # either multiple shell-split tokens or one quoted string
             joined = " ".join(input_rp)
