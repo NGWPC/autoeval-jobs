@@ -16,3 +16,10 @@ RUN python -m venv $VENV && \
 COPY gval-requirements.txt /tmp/requirements.txt
 RUN $VENV/bin/pip install -r /tmp/requirements.txt
 
+# Copy jobs into deploy directory so nomad clients can run them
+COPY utils /deploy/utils
+COPY agreement_maker /deploy/agreement_maker
+
+# Set PYTHONPATH to include /deploy so Python can find the utils module
+ENV PYTHONPATH=/deploy
+
