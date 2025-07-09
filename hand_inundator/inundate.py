@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 from typing import Any, Dict
 
 import boto3
@@ -90,7 +91,9 @@ def inundate(
     cat_path = catchment_df["catchment_raster_path"].iat[0]
 
     log.info("Starting inundation mapping")
-    tmp_tif = "/tmp/temp_inundation.tif"
+    # create a unique temp file to avoid file collisions when running locally
+    tmp_fd, tmp_tif = tempfile.mkstemp(suffix=".tif", prefix="temp_inundation_", dir="/tmp")
+    os.close(tmp_fd)  # Close the file descriptor as rasterio will open it
 
     with rasterio.Env():
         with rasterio.open(rem_path) as rem, rasterio.open(cat_path) as cat:
