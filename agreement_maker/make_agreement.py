@@ -20,8 +20,8 @@ import xarray as xr
 from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
-from rasterio.env import Env
 from rasterio import features
+from rasterio.env import Env
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import LZWProfile
 
@@ -95,27 +95,6 @@ def load_rasters(candidate_path: str, benchmark_path: str, log: logging.Logger) 
     return candidate, benchmark
 
 
-def process_clip_geometries(clip_geoms_path: str, log: logging.Logger) -> dict:
-    """Process clip geometries from JSON file and return mask dictionary."""
-    if not clip_geoms_path:
-        return {}
-
-    log.info(f"Loading clip geometries from {clip_geoms_path}")
-    with open_file(clip_geoms_path, "rt") as f:
-        clip_geoms = json.load(f)
-
-    # Convert to mask dictionary format similar to the reference function
-    mask_dict = {}
-    for i, geom_path in enumerate(clip_geoms):
-        mask_dict[f"clip_layer_{i}"] = {
-            "path": geom_path,
-            "operation": os.getenv("DEFAULT_CLIP_OPERATION", "exclude"),
-            "buffer": None,
-        }
-
-    return mask_dict
-
-
 def apply_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: logging.Logger) -> gpd.GeoDataFrame:
     """Apply exclusion masks and return combined mask geometry."""
     all_masks_df = None
@@ -129,8 +108,8 @@ def apply_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: logging
 
             log.info(f"Processing exclusion mask: {poly_layer}")
 
-            # Read mask bounds with candidate boundary box
-            poly_all = gpd.read_file(poly_path, bbox=candidate.rio.bounds())
+            with fsspec.open(poly_path, 'rb') as f:
+                poly_all = gpd.read_file(f, bbox=candidate.rio.bounds())
 
             # Make sure features are present in bounding box area before projecting
             if poly_all.empty:
@@ -161,16 +140,13 @@ def compute_agreement_map(
     candidate: xr.DataArray,
     benchmark: xr.DataArray,
     metrics_path: str,
-    clip_geoms_path: str,
+    mask_dict: dict,
     log: logging.Logger,
 ) -> xr.DataArray:
     """Compute the agreement map between candidate and benchmark rasters using pairing dictionary."""
 
     # Use shared pairing dictionary from utils
     pairing_dictionary = AGREEMENT_PAIRING_DICT
-
-    # Process clip geometries if provided
-    mask_dict = process_clip_geometries(clip_geoms_path, log)
 
     # Apply exclusion masks
     all_masks_df = apply_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
@@ -202,12 +178,12 @@ def compute_agreement_map(
     # Apply masking if exclusion masks are present
     if all_masks_df is not None:
         log.info("Applying exclusion masks to agreement map")
-        
+
         # Get the transform and shape from the agreement map
         transform = agreement_map.rio.transform()
         height = agreement_map.rio.height
         width = agreement_map.rio.width
-        
+
         # Rasterize the exclusion geometries to create a mask
         # Areas inside geometries will have value 1, outside will be 0
         mask_raster = features.rasterize(
@@ -215,15 +191,15 @@ def compute_agreement_map(
             out_shape=(height, width),
             transform=transform,
             fill=0,
-            dtype='uint8'
+            dtype="uint8",
         )
-        
+
         # Update agreement map: set excluded areas (mask==1) to value 4
         # but preserve original nodata values (255)
         agreement_map.data = xr.where(
             (mask_raster == 1) & (agreement_map != 255),
             4,  # Set to masked value
-            agreement_map  # Keep original value
+            agreement_map,  # Keep original value
         )
 
     log.info("Computing crosstab table for metrics")
@@ -378,9 +354,9 @@ def main():
         help="Optional path for output metrics table (local or S3)",
     )
     p.add_argument(
-        "--clip_geoms",
+        "--mask_dict",
         required=False,
-        help="Optional path/URI to a JSON file containing paths to geopackage or geojson vector masks used to exclude or include areas in the final agreement raster.",
+        help="Optional path/URI to a JSON file containing mask dictionary with geometry paths, operations, and buffer settings.",
     )
     p.add_argument(
         "--block_size",
@@ -406,8 +382,15 @@ def main():
         # Load and preprocess rasters
         candidate, benchmark = load_rasters(args.candidate_path, args.benchmark_path, log)
 
+        # Load mask dictionary if provided
+        mask_dict = {}
+        if args.mask_dict:
+            log.info(f"Loading mask dictionary from {args.mask_dict}")
+            with open_file(args.mask_dict, "rt") as f:
+                mask_dict = json.load(f)
+
         # Compute agreement map
-        agreement_map = compute_agreement_map(candidate, benchmark, args.metrics_path, args.clip_geoms, log)
+        agreement_map = compute_agreement_map(candidate, benchmark, args.metrics_path, mask_dict, log)
 
         # Write agreement map to GeoTIFF
         with rasterio.Env():
