@@ -274,20 +274,40 @@ def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
     need to be clipped to have the same ROI so that a pixelwise agreement can be computed.
     """
     tmp = src + "_clipped.tif"
-    gdal.Warp(
-        tmp,
-        src,
-        options=gdal.WarpOptions(
-            format="COG",
-            cutlineDSName=to_vsi(clip_path),
-            cutlineLayer="",
-            cropToCutline=False,
-            dstNodata=nodata,
-            multithread=True,
-            creationOptions=["COMPRESS=LZW", "BIGTIFF=IF_SAFER"],
-        ),
-    )
-    shutil.move(tmp, src)
+
+    with fsspec.open(clip_path, "rb") as f:
+        # Create temporary file for GDAL to use
+        temp_clip = tempfile.NamedTemporaryFile(suffix=Path(clip_path).suffix, delete=False).name
+        with open(temp_clip, "wb") as local_file:
+            shutil.copyfileobj(f, local_file)
+
+    try:
+        # Get layer name from temporary file
+        clip_ds = gdal.OpenEx(temp_clip, gdal.OF_VECTOR)
+        if not clip_ds:
+            raise ValueError(f"Could not open clip geometry file: {clip_path}")
+
+        layer_name = clip_ds.GetLayer(0).GetName()
+        clip_ds = None
+        log.info(f"Using layer '{layer_name}' for clipping")
+
+        gdal.Warp(
+            tmp,
+            src,
+            options=gdal.WarpOptions(
+                format="COG",
+                cutlineDSName=temp_clip,
+                cutlineLayer=layer_name,
+                cropToCutline=True,
+                dstNodata=nodata,
+                multithread=True,
+                creationOptions=["COMPRESS=LZW", "BIGTIFF=IF_SAFER"],
+            ),
+        )
+
+        shutil.move(tmp, src)
+    finally:
+        os.remove(temp_clip)
 
 
 def main():
