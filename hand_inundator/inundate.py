@@ -39,9 +39,10 @@ def inundate(
 ) -> str:
     """
     Generate an inundation map from:
-      1) A catchment HAND‐table Parquet (with list‐columns: stage & discharge_cms)
-      2) An NWM forecast CSV (feature_id, discharge)
-      3) Two rasters: REM & catchment ID
+      1) A catchment Parquet (with csv_path, rem_raster_path, catchment_raster_path)
+      2) A hydrotable CSV (individual stage/discharge rows per HydroID)
+      3) An NWM forecast CSV (feature_id, discharge)
+      4) Two rasters: REM & catchment ID
 
     Writes a uint8 flooded/dry mask to `output_path` (local or s3://).
     """
@@ -49,6 +50,15 @@ def inundate(
     log.info(f"Loading catchment data from {catchment_parquet}")
     with open_file(catchment_parquet, "rb") as f:
         catchment_df = pd.read_parquet(f)
+
+    # Extract CSV path and raster paths from the parquet
+    csv_path = catchment_df["csv_path"].iloc[0]
+    rem_path = catchment_df["rem_raster_path"].iloc[0]
+    cat_path = catchment_df["catchment_raster_path"].iloc[0]
+
+    log.info(f"Loading hydrotable data from {csv_path}")
+    with open_file(csv_path, "rt") as f:
+        hydrotable_df = pd.read_csv(f)
 
     log.info(f"Loading forecast data from {forecast_path}")
     with open_file(forecast_path, "rt") as f:
@@ -61,34 +71,38 @@ def inundate(
         )
 
     # Build HydroID → stage lookup
-    log.info("Building stage lookup from catchment and forecast data")
-    catchment_df["LakeID"] = catchment_df["LakeID"].astype(int)
+    log.info("Building stage lookup from hydrotable and forecast data")
+    hydrotable_df["LakeID"] = hydrotable_df["LakeID"].astype(int)
     # now filter out lakes
     lake_filter_value = int(os.getenv("LAKE_ID_FILTER_VALUE", "-999"))
-    hydro_df = catchment_df[catchment_df["LakeID"] == lake_filter_value]
+    hydro_df = hydrotable_df[hydrotable_df["LakeID"] == lake_filter_value]
     if hydro_df.empty:
-        raise ValueError("No catchments with negative LakeID -999 found in Parquet")
+        raise ValueError("No catchments with negative LakeID -999 found in hydrotable CSV")
 
-    merged = hydro_df.merge(forecast, left_on="feature_id", right_on="feature_id", how="inner")
+    # Get unique HydroID and feature_id combinations for merging
+    hydro_features = hydro_df[["HydroID", "feature_id"]].drop_duplicates()
+    merged = hydro_features.merge(forecast, left_on="feature_id", right_on="feature_id", how="inner")
     if merged.empty:
         raise ValueError("No matching forecast data for catchment features")
 
     log.info(f"Found {len(merged)} matching catchments with forecast data")
 
-    # Interpolate each feature’s forecast discharge onto its lists
-    stage_map: Dict[int, float] = {
-        int(row["HydroID"]): float(
-            np.interp(
-                row["discharge"],  # scalar from forecast
-                row["discharge_cms"],  # list from Parquet
-                row["stage"],  # list from Parquet
-            )
-        )
-        for _, row in merged.iterrows()
+    # Sort and group the rating curves
+    curves = {
+        hid: (grp["discharge_cms"].values, grp["stage"].values)
+        for hid, grp in hydro_df.sort_values("stage").groupby("HydroID")
     }
 
-    rem_path = catchment_df["rem_raster_path"].iat[0]
-    cat_path = catchment_df["catchment_raster_path"].iat[0]
+    # interpolation
+    hids = merged["HydroID"].to_numpy()
+    discharges = merged["discharge"].to_numpy()
+
+    stages = np.array([np.interp(q, *curves[hid]) for hid, q in zip(hids, discharges)], dtype=np.float32)
+
+    # Build the final stage map
+    stage_map = dict(zip(hids.tolist(), stages.tolist()))
+
+    # rem_path and cat_path already extracted from parquet above
 
     log.info("Starting inundation mapping")
     # create a unique temp file to avoid file collisions when running locally
