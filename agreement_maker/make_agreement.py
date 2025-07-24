@@ -44,13 +44,113 @@ def open_file(path: str, mode: str = "rb"):
     return fs.open(fs_path, mode)
 
 
-def to_vsi(path: str) -> str:
+def cross_walk_gval_fim(metric_df: pd.DataFrame, cell_area: int, masked_count: int) -> dict:
     """
-    Convert a standard file path or S3 path to a GDAL VSI path. This allows us to feed in either a standard filesystem path or an S3 object path to GDAL and have the script be able to work with either without the user having to think about it.
+    Crosswalks metrics made from GVAL to standard FIM names and conventions
+
+    Parameters
+    ----------
+    metric_df: pd.DataFrame
+        Dataframe for getting
+    cell_area: int
+        Area in meters of squared resolution
+    masked_count: int
+        How many pixels are masked
+
+    Returns
+    -------
+    dict
+        Dictionary of statistical metrics
     """
-    if path.lower().startswith("s3://"):
-        return "/vsis3/" + path[5:]
-    return path
+
+    # Remove band entry
+    metric_df = metric_df.iloc[:, 1:]
+
+    # Dictionary to crosswalk column names
+    crosswalk = {
+        "tn": "true_negatives_count",
+        "fn": "false_negatives_count",
+        "fp": "false_positives_count",
+        "tp": "true_positives_count",
+        "accuracy": "ACC",
+        "balanced_accuracy": "Bal_ACC",
+        "critical_success_index": "CSI",
+        "equitable_threat_score": "EQUITABLE_THREAT_SCORE",
+        "f_score": "F1_SCORE",
+        "false_discovery_rate": "FAR",
+        "false_negative_rate": "PND",
+        "false_omission_rate": "FALSE_OMISSION_RATE",
+        "false_positive_rate": "FALSE_POSITIVE_RATE",
+        "fowlkes_mallows_index": "FOWLKES_MALLOW_INDEX",
+        "matthews_correlation_coefficient": "MCC",
+        "negative_likelihood_ratio": "NEGATIVE_LIKELIHOOD_RATIO",
+        "negative_predictive_value": "NPV",
+        "overall_bias": "BIAS",
+        "positive_likelihood_ratio": "POSITIVE_LIKELIHOOD_RATIO",
+        "positive_predictive_value": "PPV",
+        "prevalence": "PREVALENCE",
+        "prevalence_threshold": "PREVALENCE_THRESHOLD",
+        "true_negative_rate": "TNR",
+        "true_positive_rate": "TPR",
+    }
+
+    metric_df.columns = [crosswalk[x] for x in metric_df.columns]
+
+    # Build
+    tn, fn, tp, fp = (
+        metric_df["true_negatives_count"].values[0],
+        metric_df["false_negatives_count"].values[0],
+        metric_df["true_positives_count"].values[0],
+        metric_df["false_positives_count"].values[0],
+    )
+    total_population = tn + fn + tp + fp
+    metric_df["contingency_tot_count"] = total_population
+
+    metric_df["TP_perc"] = (tp / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["FP_perc"] = (fp / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["TN_perc"] = (tn / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["FN_perc"] = (fn / total_population) * 100 if total_population > 0 else "NA"
+
+    predPositive = tp + fp
+    predNegative = tn + fn
+    obsPositive = tp + fn
+    obsNegative = tn + fp
+
+    metric_df["cell_area_m2"] = cell_area
+    sq_km_converter = 1000000
+
+    # This checks if a cell_area has been provided, thus making areal calculations possible.
+    metric_df["TP_area_km2"] = (tp * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["FP_area_km2"] = (fp * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["TN_area_km2"] = (tn * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["FN_area_km2"] = (fn * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["contingency_tot_area_km2"] = (
+        (total_population * cell_area) / sq_km_converter if cell_area is not None else None
+    )
+
+    metric_df["predPositive_area_km2"] = (predPositive * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["predNegative_area_km2"] = (predNegative * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["obsPositive_area_km2"] = (obsPositive * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["obsNegative_area_km2"] = (obsNegative * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["positiveDiff_area_km2"] = (
+        (metric_df["predPositive_area_km2"] - metric_df["obsPositive_area_km2"])[0] if cell_area is not None else None
+    )
+
+    total_pop_and_mask_pop = total_population + masked_count if masked_count > 0 else None
+    metric_df["masked_count"] = masked_count if masked_count > 0 else 0
+    metric_df["masked_perc"] = (masked_count / total_pop_and_mask_pop) * 100 if masked_count > 0 else 0
+    metric_df["masked_area_km2"] = (masked_count * cell_area) / sq_km_converter if masked_count > 0 else 0
+    metric_df["predPositive_perc"] = (predPositive / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["predNegative_perc"] = (predNegative / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["obsPositive_perc"] = (obsPositive / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["obsNegative_perc"] = (obsNegative / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["positiveDiff_perc"] = (
+        metric_df["predPositive_perc"].values[0] - metric_df["obsPositive_perc"].values[0]
+        if total_population > 0
+        else "NA"
+    )
+
+    return {x: y for x, y in zip(metric_df.columns, metric_df.values[0])}
 
 
 def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
@@ -108,7 +208,7 @@ def apply_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: logging
 
             log.info(f"Processing exclusion mask: {poly_layer}")
 
-            with fsspec.open(poly_path, 'rb') as f:
+            with fsspec.open(poly_path, "rb") as f:
                 poly_all = gpd.read_file(f, bbox=candidate.rio.bounds())
 
             # Make sure features are present in bounding box area before projecting
@@ -212,9 +312,25 @@ def compute_agreement_map(
             positive_categories=[1], negative_categories=[0], metrics="all"
         )
 
-        # Write metrics table using fsspec for S3 compatibility
+        # Calculate cell area from agreement map transform
+        transform = agreement_map.rio.transform()
+        cell_area = abs(transform[0]) * abs(transform[4])  # pixel width * pixel height
+        log.info(f"Calculated cell area: {cell_area} square meters")
+
+        # Count masked pixels (value 4)
+        masked_count = int((agreement_map == 4).sum().compute())
+        log.info(f"Masked pixel count: {masked_count}")
+
+        # Apply cross_walk_gval_fim to enrich metrics
+        log.info("Applying cross_walk_gval_fim to enrich metrics")
+        enriched_metrics_dict = cross_walk_gval_fim(metrics_table, cell_area, masked_count)
+
+        # Convert enriched metrics dictionary back to DataFrame
+        enriched_metrics_df = pd.DataFrame([enriched_metrics_dict])
+
+        # Write enriched metrics table using fsspec for S3 compatibility
         with open_file(metrics_path, "wt") as f:
-            metrics_table.to_csv(f)
+            enriched_metrics_df.to_csv(f, index=False)
 
         # Clean up metrics table
         del metrics_table
