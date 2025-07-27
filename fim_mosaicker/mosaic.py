@@ -406,7 +406,7 @@ def main():
 
     except Exception as e:
         # Last record on failure must be ERROR
-        log.error(f"{JOB_ID} run failed: {e}")
+        log.error(f"{JOB_ID} run failed: {type(e).__name__}: {str(e)}")
         sys.exit(1)
 
 
