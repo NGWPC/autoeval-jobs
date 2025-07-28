@@ -184,6 +184,14 @@ def load_rasters(candidate_path: str, benchmark_path: str, log: logging.Logger) 
         lock=False,
     )
 
+    # Validate that rasters have data
+    if candidate.size == 0:
+        log.error("Candidate raster is empty")
+        sys.exit(1)
+    if benchmark.size == 0:
+        log.error("Benchmark raster is empty")
+        sys.exit(1)
+
     # Handle nodata values by converting them to a consistent nodata value (255)
     log.info("Processing nodata values")
     nodata_value = int(os.getenv("EXTENT_NODATA_VALUE", "255"))
@@ -254,6 +262,22 @@ def compute_agreement_map(
     log.info("Homogenizing rasters")
     c_aligned, b_aligned = candidate.gval.homogenize(benchmark_map=benchmark, target_map="candidate")
 
+    # Validate that homogenization produced valid results
+    if c_aligned.size == 0 or b_aligned.size == 0:
+        log.error("Homogenization failed - no overlapping area between rasters")
+        sys.exit(1)
+
+    # Check if rasters have any valid (non-nodata) data after homogenization
+    valid_candidate = (c_aligned != 255).sum().compute()
+    valid_benchmark = (b_aligned != 255).sum().compute()
+
+    if valid_candidate == 0:
+        log.error("Candidate raster has no valid data after homogenization")
+        sys.exit(1)
+    if valid_benchmark == 0:
+        log.error("Benchmark raster has no valid data after homogenization")
+        sys.exit(1)
+
     # Clean up original rasters
     del candidate, benchmark
     gc.collect()
@@ -264,6 +288,11 @@ def compute_agreement_map(
         comparison_function="pairing_dict",
         pairing_dict=pairing_dictionary,
     )
+
+    # Validate that agreement map was successfully created
+    if agreement_map is None or agreement_map.size == 0:
+        log.error("Failed to compute agreement map")
+        sys.exit(1)
 
     # Cast any NaNs reintroduced by gval.compute_agreement_map to nodata
     agreement_map = agreement_map.where(~np.isnan(agreement_map), 255)
@@ -301,6 +330,12 @@ def compute_agreement_map(
             4,  # Set to masked value
             agreement_map,  # Keep original value
         )
+
+    # Final validation: check if agreement map has any valid data
+    valid_agreement_data = ((agreement_map != 255) & (agreement_map != 4)).sum().compute()
+    if valid_agreement_data == 0:
+        log.error("Agreement map contains no valid data - all pixels are either nodata or masked")
+        sys.exit(1)
 
     log.info("Computing crosstab table for metrics")
     crosstab_table = agreement_map.gval.compute_crosstab()
