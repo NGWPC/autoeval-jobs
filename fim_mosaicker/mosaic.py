@@ -21,7 +21,6 @@ from osgeo_utils.auxiliary.util import open_ds
 
 from utils.logging import setup_logger
 
-# Enable GDAL exceptions
 gdal.UseExceptions()
 
 

@@ -13,9 +13,12 @@ import numpy as np
 import pandas as pd
 import rasterio
 from fsspec.core import url_to_fs
+from osgeo import gdal
 from rasterio.windows import Window
 
 from utils.logging import setup_logger
+
+gdal.UseExceptions()
 
 
 def open_file(path: str, mode: str = "rb"):

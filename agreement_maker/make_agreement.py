@@ -20,6 +20,7 @@ import xarray as xr
 from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
+from osgeo import gdal
 from rasterio import features
 from rasterio.env import Env
 from rio_cogeo.cogeo import cog_translate
@@ -27,6 +28,8 @@ from rio_cogeo.profiles import LZWProfile
 
 from utils.logging import setup_logger
 from utils.pairing import AGREEMENT_PAIRING_DICT
+
+gdal.UseExceptions()
 
 # GLOBAL DASK CONFIGURATION
 DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
@@ -203,7 +206,7 @@ def load_rasters(candidate_path: str, benchmark_path: str, log: logging.Logger) 
     return candidate, benchmark
 
 
-def apply_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: logging.Logger) -> gpd.GeoDataFrame:
+def create_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: logging.Logger) -> gpd.GeoDataFrame:
     """Apply exclusion masks and return combined mask geometry."""
     all_masks_df = None
 
@@ -257,7 +260,7 @@ def compute_agreement_map(
     pairing_dictionary = AGREEMENT_PAIRING_DICT
 
     # Apply exclusion masks
-    all_masks_df = apply_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
+    all_masks_df = create_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
 
     log.info("Homogenizing rasters")
     c_aligned, b_aligned = candidate.gval.homogenize(benchmark_map=benchmark, target_map="candidate")
@@ -418,19 +421,32 @@ def write_agreement_map(
 
                 @delayed
                 def write_window(win, ii, jj):
-                    block = agreement_map.isel(
-                        x=slice(win.col_off, win.col_off + win.width),
-                        y=slice(win.row_off, win.row_off + win.height),
-                    ).compute()  # only compute this block!
+                    try:
+                        block = agreement_map.isel(
+                            x=slice(win.col_off, win.col_off + win.width),
+                            y=slice(win.row_off, win.row_off + win.height),
+                        ).compute()  # only compute this block!
 
-                    arr2d = np.squeeze(block.values).astype("uint8")
-                    with rasterio.open(temp_tiff_path, "r+") as d:
-                        d.write(arr2d, 1, window=win)
-                    return True
+                        arr2d = np.squeeze(block.values).astype("uint8")
+                        with rasterio.open(temp_tiff_path, "r+") as d:
+                            d.write(arr2d, 1, window=win)
+                        return (ii, jj, True, None)
+                    except Exception as e:
+                        return (ii, jj, False, str(e))
 
                 tasks.append(write_window(window, i, j))
 
-        client.compute(tasks, sync=True)
+        # Compute all tasks and check results
+        results = client.compute(tasks, sync=True)
+
+        # Check for any failed writes
+        failed_writes = [(r[0], r[1], r[3]) for r in results if not r[2]]
+        if failed_writes:
+            error_msg = f"Failed to write {len(failed_writes)} blocks: "
+            error_msg += "; ".join([f"Block ({i},{j}): {err}" for i, j, err in failed_writes[:5]])
+            if len(failed_writes) > 5:
+                error_msg += f" ... and {len(failed_writes) - 5} more"
+            raise RuntimeError(error_msg)
 
         # Convert to COG locally
         log.info("Converting to Cloud Optimized GeoTIFF")
