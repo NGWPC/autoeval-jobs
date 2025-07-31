@@ -20,7 +20,6 @@ import xarray as xr
 from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
-from osgeo import gdal
 from rasterio import features
 from rasterio.env import Env
 from rio_cogeo.cogeo import cog_translate
@@ -28,8 +27,6 @@ from rio_cogeo.profiles import LZWProfile
 
 from utils.logging import setup_logger
 from utils.pairing import AGREEMENT_PAIRING_DICT
-
-gdal.UseExceptions()
 
 # GLOBAL DASK CONFIGURATION
 DASK_CLUST_MAX_MEM = os.getenv("DASK_CLUST_MAX_MEM")
@@ -534,14 +531,6 @@ def main():
 
     args = p.parse_args()
 
-    # Validate block size
-    try:
-        block_size = int(args.block_size)
-        os.environ["GDAL_TIFF_OVR_BLOCKSIZE"] = str(block_size)
-    except ValueError:
-        log.error(f"Invalid block_size: {args.block_size}. Must be an integer.")
-        sys.exit(1)
-
     # Set up Dask cluster
     client, cluster = setup_dask_cluster(log)
 
@@ -563,7 +552,7 @@ def main():
         with rasterio.Env():
             # Set nodata to 255 for writing (following reference implementation)
             agreement_map_write = agreement_map.rio.write_nodata(255, encoded=True)
-            write_agreement_map(agreement_map_write, args.output_path, client, block_size, log)
+            write_agreement_map(agreement_map_write, args.output_path, client, int(args.block_size), log)
 
         success_outputs = {"output_path": args.output_path}
         if args.metrics_path:
