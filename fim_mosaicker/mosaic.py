@@ -7,7 +7,10 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import List, Tuple
 
@@ -151,6 +154,69 @@ def build_vrts(
     return aligned, tmpdir
 
 
+def process_single_block(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    aligned: List[gdal.Dataset],
+    dtype: int,
+    nodata: float,
+    read_lock: threading.Lock,
+) -> np.ndarray:
+    """
+    Process a single block by reading from all aligned sources and computing the max.
+    Returns the output array for this block.
+    """
+    # Allocate buffers for this block
+    read_buf = np.empty((h, w), dtype=np.float64)
+    acc_buf = np.empty((h, w), dtype=np.float64)
+    mask_buf = np.empty((h, w), dtype=bool)
+    if dtype == gdal.GDT_Byte:
+        write_buf = np.empty((h, w), dtype=np.uint8)
+    else:
+        write_buf = np.empty((h, w), dtype=np.float32)
+    
+    # Initialize accumulator
+    acc = acc_buf[:h, :w]
+    acc.fill(np.nan)
+    mask_any = mask_buf[:h, :w]
+    mask_any.fill(False)
+    
+    # Read & fmax each source (serialize GDAL reads, parallelize numpy ops)
+    for src_ds in aligned:
+        # Thread-safe GDAL read operation
+        with read_lock:
+            src_band = src_ds.GetRasterBand(1)
+            arr = gdal_array.BandReadAsArray(
+                src_band,
+                xoff=x,
+                yoff=y,
+                win_xsize=w,
+                win_ysize=h,
+                buf_obj=read_buf[:h, :w],
+            )
+            ndv = src_band.GetNoDataValue()
+        
+        # Numpy operations can happen in parallel (outside the lock)
+        if ndv is not None and not np.isnan(ndv):
+            valid = arr != ndv
+        else:
+            valid = ~np.isnan(arr)
+        arr[~valid] = np.nan
+        # in‐place fmax
+        np.fmax(acc, arr, out=acc)
+        mask_any |= valid
+    
+    # Prepare output tile
+    out = write_buf[:h, :w]
+    out.fill(nodata)
+    ok = mask_any & ~np.isnan(acc)
+    out[ok] = acc[ok].astype(out.dtype)
+    
+    return out
+
+
 def mosaic_blocks(
     aligned: List[gdal.Dataset],
     outpath: str,
@@ -160,13 +226,17 @@ def mosaic_blocks(
     dtype: int,
     nodata,
     log: logging.Logger,
+    parallel_blocks: int = 1,
 ) -> gdal.Dataset:
     """
     Do a block‐wise NaN‐max merge of aligned rasters into a final mosaic in  COG format.
-    Reuses four fixed buffers at the driver’s block size to keep memory constant to do
+    Reuses four fixed buffers at the driver's block size to keep memory constant to do
     the merging. Numpy is used to perform the max operation by casting the blocks to
     Numpy arrays to keep things performant. This approach supports mosaicing many, large
     rasters as long as the input rasters are tiled.
+    
+    Args:
+        parallel_blocks: Number of blocks to process in parallel (default: 1 for sequential)
     """
     # Create with GTiff driver first, then convert to COG
     gtiff_drv = gdal.GetDriverByName("GTiff")
@@ -194,61 +264,48 @@ def mosaic_blocks(
     # block‐size
     bx, by = band.GetBlockSize()
     total_blocks = ((dims[0] + bx - 1) // bx) * ((dims[1] + by - 1) // by)
-    block_count = 0
-
-    # pre-alloc fixed buffers at max shape (by, bx)
-    read_buf = np.empty((by, bx), dtype=np.float64)
-    acc_buf = np.empty((by, bx), dtype=np.float64)
-    mask_buf = np.empty((by, bx), dtype=bool)
-    if dtype == gdal.GDT_Byte:
-        write_buf = np.empty((by, bx), dtype=np.uint8)
+    
+    if parallel_blocks == 1:
+        log.info(f"Processing {total_blocks} blocks sequentially")
     else:
-        write_buf = np.empty((by, bx), dtype=np.float32)
-
+        log.info(f"Processing {total_blocks} blocks with {parallel_blocks} parallel workers")
+        
+    # Create locks for thread-safe GDAL operations
+    write_lock = threading.Lock()
+    read_lock = threading.Lock()
+    completed_blocks = 0
+    
+    # Create list of all block coordinates
+    block_coords = []
     for y in range(0, dims[1], by):
         for x in range(0, dims[0], bx):
             h = min(by, dims[1] - y)
             w = min(bx, dims[0] - x)
-
-            # slice out just the h×w region
-            acc = acc_buf[:h, :w]
-            acc.fill(np.nan)
-            mask_any = mask_buf[:h, :w]
-            mask_any.fill(False)
-
-            # read & fmax each source
-            for src_ds in aligned:
-                src_band = src_ds.GetRasterBand(1)
-                arr = gdal_array.BandReadAsArray(
-                    src_band,
-                    xoff=x,
-                    yoff=y,
-                    win_xsize=w,
-                    win_ysize=h,
-                    buf_obj=read_buf[:h, :w],
-                )
-                ndv = src_band.GetNoDataValue()
-                if ndv is not None and not np.isnan(ndv):
-                    valid = arr != ndv
-                else:
-                    valid = ~np.isnan(arr)
-                arr[~valid] = np.nan
-                # in‐place fmax
-                np.fmax(acc, arr, out=acc)
-                mask_any |= valid
-
-            # prepare output tile
-            out = write_buf[:h, :w]
-            out.fill(nodata)
-            ok = mask_any & ~np.isnan(acc)
-            out[ok] = acc[ok].astype(out.dtype)
-
-            # write it
-            gdal_array.BandWriteArray(band, out, xoff=x, yoff=y)
-
-            block_count += 1
-            if block_count % 100 == 0:
-                log.debug(f"Block {block_count}/{total_blocks}")
+            block_coords.append((x, y, w, h))
+    
+    # Process blocks using ThreadPoolExecutor (works for both sequential and parallel)
+    with ThreadPoolExecutor(max_workers=parallel_blocks) as executor:
+        # Submit all tasks
+        future_to_coords = {
+            executor.submit(process_single_block, x, y, w, h, aligned, dtype, nodata, read_lock): (x, y)
+            for x, y, w, h in block_coords
+        }
+        
+        # Process completed tasks
+        for future in as_completed(future_to_coords):
+            x, y = future_to_coords[future]
+            try:
+                out = future.result()
+                
+                # Thread-safe write to output dataset
+                with write_lock:
+                    gdal_array.BandWriteArray(band, out, xoff=x, yoff=y)
+                    completed_blocks += 1
+                    if completed_blocks % 100 == 0:
+                        log.debug(f"Block {completed_blocks}/{total_blocks}")
+            except Exception as e:
+                log.error(f"Error processing block at ({x}, {y}): {e}")
+                raise
 
     ds.FlushCache()
     ds = None  # Close the GTiff
@@ -321,6 +378,7 @@ def main():
         --clip_geometry_path     Optional. Path to a vector file (e.g., GeoJSON, Shapefile) used to clip the output mosaic.
         --fim_type               Optional. Either 'extent' (default, produces a byte raster with nodata=255) or 
                                  'depth' (produces a float32 raster with nodata=-9999).
+        --parallel_blocks        Optional. Number of blocks to process in parallel (default: CPU count/4, min 1).
 
     Example usage:
 
@@ -328,7 +386,8 @@ def main():
             --raster_paths s3://mybucket/tiles/*.tif \\
             --mosaic_output_path s3://mybucket/output/mosaic_cog.tif \\
             --clip_geometry_path ./aoi.geojson \\
-            --fim_type depth
+            --fim_type depth \\
+            --parallel_blocks 8
     """
     log = setup_logger(JOB_ID)
     p = argparse.ArgumentParser()
@@ -344,7 +403,13 @@ def main():
         "--fim_type",
         choices=["depth", "extent"],
         default="extent",
-        help="‘extent’→ byte, 255 nodata; ‘depth’ -> float32, -9999 no data",
+        help="'extent'→ byte, 255 nodata; 'depth' -> float32, -9999 no data",
+    )
+    p.add_argument(
+        "--parallel_blocks",
+        type=int,
+        default=max(1, cpu_count() // 4),
+        help=f"Number of blocks to process in parallel (default: {max(1, cpu_count() // 4)} = CPU count/4, min 1). Set to 1 for sequential processing.",
     )
     args = p.parse_args()
     try:
@@ -376,7 +441,7 @@ def main():
         tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
 
         # do the merge
-        out_ds = mosaic_blocks(aligned_ds, tmp_out, gt, dims, crs, dtype, nodata, log)
+        out_ds = mosaic_blocks(aligned_ds, tmp_out, gt, dims, crs, dtype, nodata, log, args.parallel_blocks)
         out_ds.FlushCache()
         out_ds = None
         gc.collect()

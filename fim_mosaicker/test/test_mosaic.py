@@ -75,6 +75,8 @@ class TestMosaicScript(unittest.TestCase):
             str(self.output_path),
             "--fim_type",
             "extent",
+            "--parallel_blocks",
+            "1",  # Explicitly test sequential mode
         ]
 
         # --- Set Environment Variables for subprocess ---
@@ -158,6 +160,95 @@ class TestMosaicScript(unittest.TestCase):
         # finally:
         #     if self.output_path.exists():
         #         self.output_path.unlink()
+
+    def test_mosaic_creation_parallel(self):
+        """Tests mosaic creation with parallel processing."""
+        if not self.input_files_exist:
+            self.skipTest("Skipping test because input raster files are missing")
+
+        # Create a separate output file for parallel test
+        parallel_output_path = self.mock_data_dir / "mosaicked_raster_parallel.tif"
+        
+        # Remove the output file if it exists
+        if parallel_output_path.exists():
+            parallel_output_path.unlink()
+
+        # Prepare raster_paths as a single space-separated string
+        raster_paths_space_str = " ".join(self.raster_paths_str_list)
+
+        cmd = [
+            sys.executable,  # Use the current Python interpreter
+            str(self.script_path),
+            "--raster_paths",
+            raster_paths_space_str,  # Pass paths as space-separated list
+            "--mosaic_output_path",
+            str(parallel_output_path),
+            "--fim_type",
+            "extent",
+            # Don't specify --parallel_blocks to test default behavior (CPU count/4)
+        ]
+
+        # --- Set Environment Variables for subprocess ---
+        test_env = os.environ.copy()
+        test_env["GDAL_CACHEMAX"] = "1024"
+
+        print(f"\nRunning default parallel command: {' '.join(cmd)}")
+        print(f"With Environment: GDAL_CACHEMAX={test_env['GDAL_CACHEMAX']}")
+
+        # Run with full output capture
+        result = subprocess.run(cmd, capture_output=True, text=True, env=test_env)
+
+        # Print full output for debugging
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"STDERR:\n{result.stderr}")
+
+        # Check return code first
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"Parallel script failed with return code {result.returncode}. Check STDERR logs above.",
+        )
+
+        # Check if the output file was created
+        self.assertTrue(
+            parallel_output_path.exists(),
+            f"Parallel mosaic output file was not created at {parallel_output_path}",
+        )
+
+        # Verify the output raster properties
+        try:
+            with rasterio.open(parallel_output_path) as src:
+                # Check data type (uint8 for extent)
+                self.assertEqual(
+                    src.dtypes[0],
+                    "uint8",
+                    f"Expected uint8 data type for extent, got {src.dtypes[0]}",
+                )
+
+                # Check nodata value (255 for extent)
+                self.assertEqual(
+                    src.nodata,
+                    255,
+                    f"Expected 255 nodata value for extent, got {src.nodata}",
+                )
+
+                # Check that data exists
+                data = src.read(1)
+                self.assertTrue(
+                    np.any(data != src.nodata),
+                    "Raster contains no valid data (all nodata values)",
+                )
+
+                # Check that there are 1s in the output
+                self.assertTrue(
+                    np.any(data == 1),
+                    "Extent raster doesn't contain any 1 values, but should have corner tiles with 1s based on mock data.",
+                )
+
+        except rasterio.RasterioIOError as e:
+            self.fail(
+                f"Failed to open or read the parallel output raster file: {parallel_output_path}. Error: {e}"
+            )
 
     # Add more tests here (e.g., test_mosaic_creation_depth, test_clipping, test_missing_input)
     # Consider adding a test that uses a temporary file for the JSON input
