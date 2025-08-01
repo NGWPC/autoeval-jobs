@@ -3,6 +3,7 @@ import argparse
 import gc
 import json
 import logging
+import math
 import os
 import shutil
 import sys
@@ -156,9 +157,12 @@ def cross_walk_gval_fim(metric_df: pd.DataFrame, cell_area: int, masked_count: i
 def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
     """Set up a local Dask cluster and return the client and cluster."""
     log.info("Starting Dask local cluster")
+
+    n_threads = max(1, (os.cpu_count() or 1) // 4)
+
     cluster = LocalCluster(
         n_workers=1,
-        threads_per_worker=1,
+        threads_per_worker=n_threads,
         processes=False,
         memory_limit=DASK_CLUST_MAX_MEM,
     )
