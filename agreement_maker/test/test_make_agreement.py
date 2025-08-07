@@ -30,7 +30,7 @@ class TestAgreementScript(unittest.TestCase):
         # Input paths using pathlib
         cls.candidate_path = cls.mock_data_dir / "candidate_raster.tif"
         cls.benchmark_path = cls.mock_data_dir / "benchmark_raster.tif"
-        cls.clip_geoms_path = cls.mock_data_dir / "clip_square.json"
+        cls.mask_dict_path = cls.mock_data_dir / "mask_dict.json"
         cls.clip_gpkg_path = cls.mock_data_dir / "clip_square.gpkg"
 
         # Output paths using pathlib
@@ -38,7 +38,7 @@ class TestAgreementScript(unittest.TestCase):
         cls.metrics_path = cls.mock_data_dir / "metrics_output.csv"
 
         # Check for input files
-        required_files = [cls.candidate_path, cls.benchmark_path, cls.clip_geoms_path]
+        required_files = [cls.candidate_path, cls.benchmark_path, cls.mask_dict_path]
         missing_files = [p for p in required_files if not p.exists()]
         if missing_files:
             print(f"\nWARNING: The following test files are missing: {missing_files}")
@@ -72,8 +72,8 @@ class TestAgreementScript(unittest.TestCase):
             str(self.output_path),
             "--metrics_path",
             str(self.metrics_path),
-            "--clip_geoms",
-            str(self.clip_geoms_path),
+            "--mask_dict",
+            str(self.mask_dict_path),
             "--block_size",
             "512",
         ]

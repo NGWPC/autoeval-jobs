@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import warnings
 from typing import Tuple
 
 import fsspec
@@ -23,6 +24,7 @@ from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
 from rasterio import features
 from rasterio.env import Env
+from rasterio.errors import NotGeoreferencedWarning
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import LZWProfile
 
@@ -492,6 +494,9 @@ def write_agreement_map(
 
 def main():
     log = setup_logger(JOB_ID)
+    
+    # Configure warnings to treat NotGeoreferencedWarning as an error
+    warnings.filterwarnings('error', category=NotGeoreferencedWarning)
 
     # Parse command-line arguments
     p = argparse.ArgumentParser(description="Compare two raster datasets.")
@@ -563,6 +568,9 @@ def main():
             success_outputs["metrics_path"] = args.metrics_path
         log.success(success_outputs)
 
+    except NotGeoreferencedWarning as e:
+        log.error(f"Raster file is not georeferenced: {e}")
+        sys.exit(1)
     except Exception as e:
         log.error(f"{JOB_ID} run failed: {e}")
         sys.exit(1)

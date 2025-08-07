@@ -1,0 +1,7 @@
+{
+  "clip_mask": {
+    "path": "/app/test/mock_data/clip_square.gpkg",
+    "operation": "exclude",
+    "buffer": null
+  }
+}
