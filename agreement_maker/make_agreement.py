@@ -47,7 +47,9 @@ def open_file(path: str, mode: str = "rb"):
     return fs.open(fs_path, mode)
 
 
-def cross_walk_gval_fim(metric_df: pd.DataFrame, cell_area: int, masked_count: int) -> dict:
+def cross_walk_gval_fim(
+    metric_df: pd.DataFrame, cell_area: int, masked_count: int
+) -> dict:
     """
     Crosswalks metrics made from GVAL to standard FIM names and conventions
 
@@ -109,10 +111,18 @@ def cross_walk_gval_fim(metric_df: pd.DataFrame, cell_area: int, masked_count: i
     total_population = tn + fn + tp + fp
     metric_df["contingency_tot_count"] = total_population
 
-    metric_df["TP_perc"] = (tp / total_population) * 100 if total_population > 0 else "NA"
-    metric_df["FP_perc"] = (fp / total_population) * 100 if total_population > 0 else "NA"
-    metric_df["TN_perc"] = (tn / total_population) * 100 if total_population > 0 else "NA"
-    metric_df["FN_perc"] = (fn / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["TP_perc"] = (
+        (tp / total_population) * 100 if total_population > 0 else "NA"
+    )
+    metric_df["FP_perc"] = (
+        (fp / total_population) * 100 if total_population > 0 else "NA"
+    )
+    metric_df["TN_perc"] = (
+        (tn / total_population) * 100 if total_population > 0 else "NA"
+    )
+    metric_df["FN_perc"] = (
+        (fn / total_population) * 100 if total_population > 0 else "NA"
+    )
 
     predPositive = tp + fp
     predNegative = tn + fn
@@ -123,32 +133,82 @@ def cross_walk_gval_fim(metric_df: pd.DataFrame, cell_area: int, masked_count: i
     sq_km_converter = 1000000
 
     # This checks if a cell_area has been provided, thus making areal calculations possible.
-    metric_df["TP_area_km2"] = (tp * cell_area) / sq_km_converter if cell_area is not None else None
-    metric_df["FP_area_km2"] = (fp * cell_area) / sq_km_converter if cell_area is not None else None
-    metric_df["TN_area_km2"] = (tn * cell_area) / sq_km_converter if cell_area is not None else None
-    metric_df["FN_area_km2"] = (fn * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["TP_area_km2"] = (
+        (tp * cell_area) / sq_km_converter if cell_area is not None else None
+    )
+    metric_df["FP_area_km2"] = (
+        (fp * cell_area) / sq_km_converter if cell_area is not None else None
+    )
+    metric_df["TN_area_km2"] = (
+        (tn * cell_area) / sq_km_converter if cell_area is not None else None
+    )
+    metric_df["FN_area_km2"] = (
+        (fn * cell_area) / sq_km_converter if cell_area is not None else None
+    )
     metric_df["contingency_tot_area_km2"] = (
-        (total_population * cell_area) / sq_km_converter if cell_area is not None else None
+        (total_population * cell_area) / sq_km_converter
+        if cell_area is not None
+        else None
     )
 
-    metric_df["predPositive_area_km2"] = (predPositive * cell_area) / sq_km_converter if cell_area is not None else None
-    metric_df["predNegative_area_km2"] = (predNegative * cell_area) / sq_km_converter if cell_area is not None else None
-    metric_df["obsPositive_area_km2"] = (obsPositive * cell_area) / sq_km_converter if cell_area is not None else None
-    metric_df["obsNegative_area_km2"] = (obsNegative * cell_area) / sq_km_converter if cell_area is not None else None
+    metric_df["predPositive_area_km2"] = (
+        (predPositive * cell_area) / sq_km_converter
+        if cell_area is not None
+        else None
+    )
+    metric_df["predNegative_area_km2"] = (
+        (predNegative * cell_area) / sq_km_converter
+        if cell_area is not None
+        else None
+    )
+    metric_df["obsPositive_area_km2"] = (
+        (obsPositive * cell_area) / sq_km_converter
+        if cell_area is not None
+        else None
+    )
+    metric_df["obsNegative_area_km2"] = (
+        (obsNegative * cell_area) / sq_km_converter
+        if cell_area is not None
+        else None
+    )
     metric_df["positiveDiff_area_km2"] = (
-        (metric_df["predPositive_area_km2"] - metric_df["obsPositive_area_km2"])[0] if cell_area is not None else None
+        (
+            metric_df["predPositive_area_km2"]
+            - metric_df["obsPositive_area_km2"]
+        )[0]
+        if cell_area is not None
+        else None
     )
 
-    total_pop_and_mask_pop = total_population + masked_count if masked_count > 0 else None
+    total_pop_and_mask_pop = (
+        total_population + masked_count if masked_count > 0 else None
+    )
     metric_df["masked_count"] = masked_count if masked_count > 0 else 0
-    metric_df["masked_perc"] = (masked_count / total_pop_and_mask_pop) * 100 if masked_count > 0 else 0
-    metric_df["masked_area_km2"] = (masked_count * cell_area) / sq_km_converter if masked_count > 0 else 0
-    metric_df["predPositive_perc"] = (predPositive / total_population) * 100 if total_population > 0 else "NA"
-    metric_df["predNegative_perc"] = (predNegative / total_population) * 100 if total_population > 0 else "NA"
-    metric_df["obsPositive_perc"] = (obsPositive / total_population) * 100 if total_population > 0 else "NA"
-    metric_df["obsNegative_perc"] = (obsNegative / total_population) * 100 if total_population > 0 else "NA"
+    metric_df["masked_perc"] = (
+        (masked_count / total_pop_and_mask_pop) * 100 if masked_count > 0 else 0
+    )
+    metric_df["masked_area_km2"] = (
+        (masked_count * cell_area) / sq_km_converter if masked_count > 0 else 0
+    )
+    metric_df["predPositive_perc"] = (
+        (predPositive / total_population) * 100
+        if total_population > 0
+        else "NA"
+    )
+    metric_df["predNegative_perc"] = (
+        (predNegative / total_population) * 100
+        if total_population > 0
+        else "NA"
+    )
+    metric_df["obsPositive_perc"] = (
+        (obsPositive / total_population) * 100 if total_population > 0 else "NA"
+    )
+    metric_df["obsNegative_perc"] = (
+        (obsNegative / total_population) * 100 if total_population > 0 else "NA"
+    )
     metric_df["positiveDiff_perc"] = (
-        metric_df["predPositive_perc"].values[0] - metric_df["obsPositive_perc"].values[0]
+        metric_df["predPositive_perc"].values[0]
+        - metric_df["obsPositive_perc"].values[0]
         if total_population > 0
         else "NA"
     )
@@ -173,20 +233,28 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
     return client, cluster
 
 
-def load_rasters(candidate_path: str, benchmark_path: str, log: logging.Logger) -> Tuple[xr.DataArray, xr.DataArray]:
+def load_rasters(
+    candidate_path: str, benchmark_path: str, log: logging.Logger
+) -> Tuple[xr.DataArray, xr.DataArray]:
     """Load candidate and benchmark rasters without remapping."""
     log.info(f"Loading candidate raster: {candidate_path}")
     candidate = rxr.open_rasterio(
         candidate_path,
         mask_and_scale=True,
-        chunks={"x": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")), "y": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048"))},
+        chunks={
+            "x": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")),
+            "y": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")),
+        },
         lock=False,
     )
     log.info(f"Loading benchmark raster: {benchmark_path}")
     benchmark = rxr.open_rasterio(
         benchmark_path,
         mask_and_scale=True,
-        chunks={"x": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")), "y": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048"))},
+        chunks={
+            "x": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")),
+            "y": int(os.getenv("RASTERIO_CHUNK_SIZE", "2048")),
+        },
         lock=False,
     )
 
@@ -201,15 +269,21 @@ def load_rasters(candidate_path: str, benchmark_path: str, log: logging.Logger) 
     # Handle nodata values by converting them to a consistent nodata value (255)
     log.info("Processing nodata values")
     nodata_value = int(os.getenv("EXTENT_NODATA_VALUE", "255"))
-    candidate.data = xr.where(candidate == candidate.rio.nodata, nodata_value, candidate)
+    candidate.data = xr.where(
+        candidate == candidate.rio.nodata, nodata_value, candidate
+    )
     candidate = candidate.rio.write_nodata(nodata_value)
-    benchmark.data = xr.where(benchmark == benchmark.rio.nodata, nodata_value, benchmark)
+    benchmark.data = xr.where(
+        benchmark == benchmark.rio.nodata, nodata_value, benchmark
+    )
     benchmark = benchmark.rio.write_nodata(nodata_value)
 
     return candidate, benchmark
 
 
-def create_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: logging.Logger) -> gpd.GeoDataFrame:
+def create_exclusion_masks(
+    candidate: xr.DataArray, mask_dict: dict, log: logging.Logger
+) -> gpd.GeoDataFrame:
     """Apply exclusion masks and return combined mask geometry."""
     all_masks_df = None
 
@@ -218,7 +292,11 @@ def create_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: loggin
 
         if operation == "exclude":
             poly_path = mask_dict[poly_layer]["path"]
-            buffer_val = 0 if mask_dict[poly_layer]["buffer"] is None else mask_dict[poly_layer]["buffer"]
+            buffer_val = (
+                0
+                if mask_dict[poly_layer]["buffer"] is None
+                else mask_dict[poly_layer]["buffer"]
+            )
 
             log.info(f"Processing exclusion mask: {poly_layer}")
 
@@ -227,7 +305,9 @@ def create_exclusion_masks(candidate: xr.DataArray, mask_dict: dict, log: loggin
 
             # Make sure features are present in bounding box area before projecting
             if poly_all.empty:
-                log.warning(f"No features found in bounding box for {poly_layer}")
+                log.warning(
+                    f"No features found in bounding box for {poly_layer}"
+                )
                 del poly_all
                 gc.collect()
                 continue
@@ -263,10 +343,14 @@ def compute_agreement_map(
     pairing_dictionary = AGREEMENT_PAIRING_DICT
 
     # Apply exclusion masks
-    all_masks_df = create_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
+    all_masks_df = (
+        create_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
+    )
 
     log.info("Homogenizing rasters")
-    c_aligned, b_aligned = candidate.gval.homogenize(benchmark_map=benchmark, target_map="candidate")
+    c_aligned, b_aligned = candidate.gval.homogenize(
+        benchmark_map=benchmark, target_map="candidate"
+    )
 
     # Validate that homogenization produced valid results
     if c_aligned.size == 0 or b_aligned.size == 0:
@@ -338,9 +422,13 @@ def compute_agreement_map(
         )
 
     # Final validation: check if agreement map has any valid data
-    valid_agreement_data = ((agreement_map != 255) & (agreement_map != 4)).sum().compute()
+    valid_agreement_data = (
+        ((agreement_map != 255) & (agreement_map != 4)).sum().compute()
+    )
     if valid_agreement_data == 0:
-        log.error("Agreement map contains no valid data - all pixels are either nodata or masked")
+        log.error(
+            "Agreement map contains no valid data - all pixels are either nodata or masked"
+        )
         sys.exit(1)
 
     log.info("Computing crosstab table for metrics")
@@ -355,7 +443,9 @@ def compute_agreement_map(
 
         # Calculate cell area from agreement map transform
         transform = agreement_map.rio.transform()
-        cell_area = abs(transform[0]) * abs(transform[4])  # pixel width * pixel height
+        cell_area = abs(transform[0]) * abs(
+            transform[4]
+        )  # pixel width * pixel height
         log.info(f"Calculated cell area: {cell_area} square meters")
 
         # Count masked pixels (value 4)
@@ -364,7 +454,9 @@ def compute_agreement_map(
 
         # Apply cross_walk_gval_fim to enrich metrics
         log.info("Applying cross_walk_gval_fim to enrich metrics")
-        enriched_metrics_dict = cross_walk_gval_fim(metrics_table, cell_area, masked_count)
+        enriched_metrics_dict = cross_walk_gval_fim(
+            metrics_table, cell_area, masked_count
+        )
 
         # Convert enriched metrics dictionary back to DataFrame
         enriched_metrics_df = pd.DataFrame([enriched_metrics_dict])
@@ -430,7 +522,21 @@ def write_agreement_map(
                             y=slice(win.row_off, win.row_off + win.height),
                         ).compute()  # only compute this block!
 
-                        arr2d = np.squeeze(block.values).astype("uint8")
+                        # Safely extract 2D array from block, handling various dimension scenarios
+                        if block.ndim == 3 and block.shape[0] == 1:
+                            # 3D array with single band - extract the first band
+                            arr2d = block.values[0, :, :].astype("uint8")
+                        elif block.ndim == 2:
+                            # Already 2D - use as is
+                            arr2d = block.values.astype("uint8")
+                        else:
+                            # Fallback for unexpected dimensions
+                            arr2d = block.values.squeeze().astype("uint8")
+                            # Ensure we have a 2D array
+                            if arr2d.ndim != 2:
+                                # Force reshape to match window dimensions
+                                arr2d = arr2d.reshape((win.height, win.width))
+
                         with rasterio.open(temp_tiff_path, "r+") as d:
                             d.write(arr2d, 1, window=win)
                         return (ii, jj, True, None)
@@ -446,7 +552,9 @@ def write_agreement_map(
         failed_writes = [(r[0], r[1], r[3]) for r in results if not r[2]]
         if failed_writes:
             error_msg = f"Failed to write {len(failed_writes)} blocks: "
-            error_msg += "; ".join([f"Block ({i},{j}): {err}" for i, j, err in failed_writes[:5]])
+            error_msg += "; ".join(
+                [f"Block ({i},{j}): {err}" for i, j, err in failed_writes[:5]]
+            )
             if len(failed_writes) > 5:
                 error_msg += f" ... and {len(failed_writes) - 5} more"
             raise RuntimeError(error_msg)
@@ -494,9 +602,9 @@ def write_agreement_map(
 
 def main():
     log = setup_logger(JOB_ID)
-    
+
     # Configure warnings to treat NotGeoreferencedWarning as an error
-    warnings.filterwarnings('error', category=NotGeoreferencedWarning)
+    warnings.filterwarnings("error", category=NotGeoreferencedWarning)
 
     # Parse command-line arguments
     p = argparse.ArgumentParser(description="Compare two raster datasets.")
@@ -545,7 +653,9 @@ def main():
 
     try:
         # Load and preprocess rasters
-        candidate, benchmark = load_rasters(args.candidate_path, args.benchmark_path, log)
+        candidate, benchmark = load_rasters(
+            args.candidate_path, args.benchmark_path, log
+        )
 
         # Load mask dictionary if provided
         mask_dict = {}
@@ -555,13 +665,23 @@ def main():
                 mask_dict = json.load(f)
 
         # Compute agreement map
-        agreement_map = compute_agreement_map(candidate, benchmark, args.metrics_path, mask_dict, log)
+        agreement_map = compute_agreement_map(
+            candidate, benchmark, args.metrics_path, mask_dict, log
+        )
 
         # Write agreement map to GeoTIFF
         with rasterio.Env():
             # Set nodata to 255 for writing (following reference implementation)
-            agreement_map_write = agreement_map.rio.write_nodata(255, encoded=True)
-            write_agreement_map(agreement_map_write, args.output_path, client, int(args.block_size), log)
+            agreement_map_write = agreement_map.rio.write_nodata(
+                255, encoded=True
+            )
+            write_agreement_map(
+                agreement_map_write,
+                args.output_path,
+                client,
+                int(args.block_size),
+                log,
+            )
 
         success_outputs = {"output_path": args.output_path}
         if args.metrics_path:
