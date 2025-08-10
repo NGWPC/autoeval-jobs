@@ -224,8 +224,7 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
 
     cluster = LocalCluster(
         n_workers=1,
-        threads_per_worker=n_threads,
-        processes=False,
+        threads_per_worker=1,
         memory_limit=DASK_CLUST_MAX_MEM,
     )
     client = Client(cluster)
