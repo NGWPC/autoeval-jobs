@@ -23,8 +23,10 @@ from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
 from rasterio import features
+from rasterio.enums import Resampling
 from rasterio.env import Env
 from rasterio.errors import NotGeoreferencedWarning
+from rasterio.windows import transform
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import LZWProfile
 
@@ -348,8 +350,32 @@ def compute_agreement_map(
 
     log.info("Homogenizing rasters")
     c_aligned, b_aligned = candidate.gval.homogenize(
-        benchmark_map=benchmark, target_map="candidate"
+        benchmark_map=benchmark,
+        target_map="candidate",
+        resampling=Resampling.nearest,  # Use nearest categorical flood extent data. Bilinear for depth. TODO make this configurable as part of improvements to handle depth rasters
     )
+
+    # Validate transforms after homogenization and restores if lost
+    if (
+        not hasattr(c_aligned.rio, "transform")
+        or c_aligned.rio.transform() is None
+    ):
+        log.warning(
+            "Candidate lost transform during homogenization, restoring..."
+        )
+        c_aligned = c_aligned.rio.write_transform(candidate.rio.transform())
+        c_aligned = c_aligned.rio.write_crs(candidate.rio.crs)
+
+    if (
+        not hasattr(b_aligned.rio, "transform")
+        or b_aligned.rio.transform() is None
+    ):
+        log.warning(
+            "Benchmark lost transform during homogenization, restoring..."
+        )
+        # Use candidate's transform since target_map="candidate"
+        b_aligned = b_aligned.rio.write_transform(candidate.rio.transform())
+        b_aligned = b_aligned.rio.write_crs(candidate.rio.crs)
 
     # Validate that homogenization produced valid results
     if c_aligned.size == 0 or b_aligned.size == 0:
@@ -493,14 +519,19 @@ def write_agreement_map(
     try:
         # use rasterio to write agreement map (better for large rasters)
         tasks = []
+
+        # Store transform outside delayed function
+        base_transform = agreement_map.rio.transform()
+        base_crs = agreement_map.rio.crs
+
         output_profile = {
             "driver": "GTiff",
             "height": agreement_map.rio.height,
             "width": agreement_map.rio.width,
             "count": 1,
             "dtype": agreement_map.dtype,
-            "crs": agreement_map.rio.crs,
-            "transform": agreement_map.rio.transform(),
+            "crs": base_crs,
+            "transform": base_transform,
             "compress": "LZW",
             "tiled": True,
             "blockxsize": block_size,
@@ -514,12 +545,25 @@ def write_agreement_map(
                 i, j = ij
 
                 @delayed
-                def write_window(win, ii, jj):
+                def write_window(win, ii, jj, base_tf, base_crs_val):
                     try:
                         block = agreement_map.isel(
                             x=slice(win.col_off, win.col_off + win.width),
                             y=slice(win.row_off, win.row_off + win.height),
                         ).compute()  # only compute this block!
+
+                        # Validate block has transform
+                        if (
+                            not hasattr(block.rio, "transform")
+                            or block.rio.transform() is None
+                        ):
+                            # Calculate window-specific transform
+                            block_transform = transform(win, base_tf)
+                            block = block.rio.write_transform(block_transform)
+                            block = block.rio.write_crs(base_crs_val)
+                            log.debug(
+                                f"Restored transform for block ({ii}, {jj})"
+                            )
 
                         # Safely extract 2D array from block, handling various dimension scenarios
                         if block.ndim == 3 and block.shape[0] == 1:
@@ -537,12 +581,18 @@ def write_agreement_map(
                                 arr2d = arr2d.reshape((win.height, win.width))
 
                         with rasterio.open(temp_tiff_path, "r+") as d:
+                            # Verify destination has transform
+                            if d.transform is None:
+                                d.transform = base_tf
                             d.write(arr2d, 1, window=win)
                         return (ii, jj, True, None)
                     except Exception as e:
+                        log.error(f"Block ({ii}, {jj}) write failed: {str(e)}")
                         return (ii, jj, False, str(e))
 
-                tasks.append(write_window(window, i, j))
+                tasks.append(
+                    write_window(window, i, j, base_transform, base_crs)
+                )
 
         # Compute all tasks and check results
         results = client.compute(tasks, sync=True)
@@ -669,7 +719,10 @@ def main():
         )
 
         # Write agreement map to GeoTIFF
-        with rasterio.Env():
+        with rasterio.Env(
+            CHECK_WITH_INVERT_PROJ=True,
+            GTIFF_FORCE_RGBA=False,  # Prevent unwanted band expansion
+        ):
             # Set nodata to 255 for writing (following reference implementation)
             agreement_map_write = agreement_map.rio.write_nodata(
                 255, encoded=True
