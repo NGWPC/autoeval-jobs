@@ -420,7 +420,7 @@ def compute_agreement_map(
         not hasattr(agreement_map.rio, "transform")
         or agreement_map.rio.transform() is None
     ):
-        log.warning(
+        log.info(
             "Agreement map lost transform during computation, restoring from candidate..."
         )
         agreement_map = agreement_map.rio.write_transform(
@@ -460,13 +460,13 @@ def compute_agreement_map(
             not hasattr(agreement_map.rio, "transform")
             or agreement_map.rio.transform() is None
         ):
-            log.debug("Restoring transform after masking operation")
+            log.info("Restoring transform after masking operation")
             agreement_map = agreement_map.rio.write_transform(
                 c_aligned.rio.transform()
             )
             agreement_map = agreement_map.rio.write_crs(c_aligned.rio.crs)
 
-    # Clean up aligned rasters
+    # Clean up aligned rasters (moved after masking to keep c_aligned crs and transform available)
     del c_aligned, b_aligned
     gc.collect()
 
@@ -585,7 +585,7 @@ def write_agreement_map(
                             block_transform = transform(win, base_tf)
                             block = block.rio.write_transform(block_transform)
                             block = block.rio.write_crs(base_crs_val)
-                            log.debug(
+                            log.info(
                                 f"Restored transform for block ({ii}, {jj})"
                             )
 
@@ -761,7 +761,7 @@ def main():
                 not hasattr(agreement_map_write.rio, "transform")
                 or agreement_map_write.rio.transform() is None
             ):
-                log.debug("Restoring transform after write_nodata operation")
+                log.info("Restoring transform after write_nodata operation")
                 agreement_map_write = agreement_map_write.rio.write_transform(
                     stored_transform
                 )
