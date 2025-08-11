@@ -415,6 +415,19 @@ def compute_agreement_map(
     # Set pairing dictionary as attribute for later use by gval functions
     agreement_map.attrs["pairing_dictionary"] = pairing_dictionary
 
+    # Validate agreement map has proper geotransform
+    if (
+        not hasattr(agreement_map.rio, "transform")
+        or agreement_map.rio.transform() is None
+    ):
+        log.warning(
+            "Agreement map lost transform during computation, restoring from candidate..."
+        )
+        agreement_map = agreement_map.rio.write_transform(
+            c_aligned.rio.transform()
+        )
+        agreement_map = agreement_map.rio.write_crs(c_aligned.rio.crs)
+
     # Clean up aligned rasters
     del c_aligned, b_aligned
     gc.collect()
