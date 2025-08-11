@@ -428,10 +428,6 @@ def compute_agreement_map(
         )
         agreement_map = agreement_map.rio.write_crs(c_aligned.rio.crs)
 
-    # Clean up aligned rasters
-    del c_aligned, b_aligned
-    gc.collect()
-
     # Apply masking if exclusion masks are present
     if all_masks_df is not None:
         log.info("Applying exclusion masks to agreement map")
@@ -458,6 +454,21 @@ def compute_agreement_map(
             4,  # Set to masked value
             agreement_map,  # Keep original value
         )
+
+        # Restore transform if lost during xr.where operation
+        if (
+            not hasattr(agreement_map.rio, "transform")
+            or agreement_map.rio.transform() is None
+        ):
+            log.debug("Restoring transform after masking operation")
+            agreement_map = agreement_map.rio.write_transform(
+                c_aligned.rio.transform()
+            )
+            agreement_map = agreement_map.rio.write_crs(c_aligned.rio.crs)
+
+    # Clean up aligned rasters
+    del c_aligned, b_aligned
+    gc.collect()
 
     # Final validation: check if agreement map has any valid data
     valid_agreement_data = (
@@ -736,10 +747,28 @@ def main():
             CHECK_WITH_INVERT_PROJ=True,
             GTIFF_FORCE_RGBA=False,  # Prevent unwanted band expansion
         ):
+            # Store transform and CRS before write_nodata (which may strip them)
+            stored_transform = agreement_map.rio.transform()
+            stored_crs = agreement_map.rio.crs
+
             # Set nodata to 255 for writing (following reference implementation)
             agreement_map_write = agreement_map.rio.write_nodata(
                 255, encoded=True
             )
+
+            # Restore transform and CRS if lost during write_nodata
+            if (
+                not hasattr(agreement_map_write.rio, "transform")
+                or agreement_map_write.rio.transform() is None
+            ):
+                log.debug("Restoring transform after write_nodata operation")
+                agreement_map_write = agreement_map_write.rio.write_transform(
+                    stored_transform
+                )
+                agreement_map_write = agreement_map_write.rio.write_crs(
+                    stored_crs
+                )
+
             write_agreement_map(
                 agreement_map_write,
                 args.output_path,
