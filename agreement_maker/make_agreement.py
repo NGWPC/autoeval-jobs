@@ -223,14 +223,28 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
     """Set up a local Dask cluster and return the client and cluster."""
     log.info("Starting Dask local cluster")
 
-    n_threads = max(1, (os.cpu_count() or 1) // 4)
-
     cluster = LocalCluster(
         n_workers=1,
-        threads_per_worker=1,
+        threads_per_worker=1,  # Keep single thread to avoid memory pressure
         memory_limit=DASK_CLUST_MAX_MEM,
+        processes=False,  # Use threads instead of processes to reduce memory overhead
+        silence_logs=False,
     )
     client = Client(cluster)
+
+    # Optimize Dask configuration for large graphs
+    client.configure(
+        {
+            "distributed.worker.memory.target": 0.7,  # GC more aggressively
+            "distributed.worker.memory.spill": 0.75,
+            "distributed.worker.memory.pause": 0.8,
+            "distributed.worker.memory.terminate": 0.9,
+            "distributed.comm.compression": "lz4",  # Faster compression
+            "distributed.scheduler.allowed-failures": 5,
+            "distributed.client.heartbeat": "10s",
+        }
+    )
+
     log.info(f"Dask dashboard link: {client.dashboard_link}")
     return client, cluster
 
@@ -538,74 +552,110 @@ def write_agreement_map(
             "nodata": 255,  # Updated nodata value
         }
 
-        # Write data block by block
+        # Write data block by block using batch processing to reduce graph size
         with rasterio.open(temp_tiff_path, "w", **output_profile) as dst:
-            for ij, window in dst.block_windows(1):
-                i, j = ij
+            windows = list(dst.block_windows(1))
+            batch_size = min(16, len(windows))  # Process in smaller batches
 
-                @delayed
-                def write_window(win, ii, jj, base_tf, base_crs_val):
-                    try:
-                        block = agreement_map.isel(
-                            x=slice(win.col_off, win.col_off + win.width),
-                            y=slice(win.row_off, win.row_off + win.height),
-                        ).compute()  # only compute this block!
+            for batch_start in range(0, len(windows), batch_size):
+                batch_end = min(batch_start + batch_size, len(windows))
+                batch_tasks = []
 
-                        # Validate block has transform
-                        if (
-                            not hasattr(block.rio, "transform")
-                            or block.rio.transform() is None
-                        ):
-                            # Calculate window-specific transform
-                            block_transform = transform(win, base_tf)
-                            block = block.rio.write_transform(block_transform)
-                            block = block.rio.write_crs(base_crs_val)
-                            log.info(
-                                f"Restored transform for block ({ii}, {jj})"
+                for idx in range(batch_start, batch_end):
+                    ij, window = windows[idx]
+                    i, j = ij
+
+                    # Pre-compute block to avoid large graph serialization
+                    block = agreement_map.isel(
+                        x=slice(window.col_off, window.col_off + window.width),
+                        y=slice(window.row_off, window.row_off + window.height),
+                    ).compute()
+
+                    @delayed
+                    def write_window_batch(
+                        computed_block, win, ii, jj, base_tf, base_crs_val
+                    ):
+                        try:
+                            # Validate block has transform
+                            if (
+                                not hasattr(computed_block.rio, "transform")
+                                or computed_block.rio.transform() is None
+                            ):
+                                # Calculate window-specific transform
+                                block_transform = transform(win, base_tf)
+                                computed_block = (
+                                    computed_block.rio.write_transform(
+                                        block_transform
+                                    )
+                                )
+                                computed_block = computed_block.rio.write_crs(
+                                    base_crs_val
+                                )
+                                log.info(
+                                    f"Restored transform for block ({ii}, {jj})"
+                                )
+
+                            # Safely extract 2D array from block, handling various dimension scenarios
+                            if (
+                                computed_block.ndim == 3
+                                and computed_block.shape[0] == 1
+                            ):
+                                # 3D array with single band - extract the first band
+                                arr2d = computed_block.values[0, :, :].astype(
+                                    "uint8"
+                                )
+                            elif computed_block.ndim == 2:
+                                # Already 2D - use as is
+                                arr2d = computed_block.values.astype("uint8")
+                            else:
+                                # Fallback for unexpected dimensions
+                                arr2d = computed_block.values.squeeze().astype(
+                                    "uint8"
+                                )
+                                # Ensure we have a 2D array
+                                if arr2d.ndim != 2:
+                                    # Force reshape to match window dimensions
+                                    arr2d = arr2d.reshape(
+                                        (win.height, win.width)
+                                    )
+
+                            with rasterio.open(temp_tiff_path, "r+") as d:
+                                # Verify destination has transform
+                                if d.transform is None:
+                                    d.transform = base_tf
+                                d.write(arr2d, 1, window=win)
+                            return (ii, jj, True, None)
+                        except Exception as e:
+                            log.error(
+                                f"Block ({ii}, {jj}) write failed: {str(e)}"
                             )
+                            return (ii, jj, False, str(e))
 
-                        # Safely extract 2D array from block, handling various dimension scenarios
-                        if block.ndim == 3 and block.shape[0] == 1:
-                            # 3D array with single band - extract the first band
-                            arr2d = block.values[0, :, :].astype("uint8")
-                        elif block.ndim == 2:
-                            # Already 2D - use as is
-                            arr2d = block.values.astype("uint8")
-                        else:
-                            # Fallback for unexpected dimensions
-                            arr2d = block.values.squeeze().astype("uint8")
-                            # Ensure we have a 2D array
-                            if arr2d.ndim != 2:
-                                # Force reshape to match window dimensions
-                                arr2d = arr2d.reshape((win.height, win.width))
+                    batch_tasks.append(
+                        write_window_batch(
+                            block, window, i, j, base_transform, base_crs
+                        )
+                    )
 
-                        with rasterio.open(temp_tiff_path, "r+") as d:
-                            # Verify destination has transform
-                            if d.transform is None:
-                                d.transform = base_tf
-                            d.write(arr2d, 1, window=win)
-                        return (ii, jj, True, None)
-                    except Exception as e:
-                        log.error(f"Block ({ii}, {jj}) write failed: {str(e)}")
-                        return (ii, jj, False, str(e))
-
-                tasks.append(
-                    write_window(window, i, j, base_transform, base_crs)
+                # Process batch and clear memory
+                log.info(
+                    f"Processing batch {batch_start // batch_size + 1}/{(len(windows) + batch_size - 1) // batch_size}"
                 )
+                batch_results = client.compute(batch_tasks, sync=True)
 
-        # Compute all tasks and check results
-        results = client.compute(tasks, sync=True)
+                # Check for failures in this batch
+                failed_in_batch = [
+                    (r[0], r[1], r[3]) for r in batch_results if not r[2]
+                ]
+                if failed_in_batch:
+                    raise RuntimeError(
+                        f"Failed to write {len(failed_in_batch)} blocks in batch: {failed_in_batch}"
+                    )
 
-        # Check for any failed writes
-        failed_writes = [(r[0], r[1], r[3]) for r in results if not r[2]]
-        if failed_writes:
-            error_msg = f"Failed to write {len(failed_writes)} blocks: "
-            error_msg += "; ".join(
-                [f"Block ({i},{j}): {err}" for i, j, err in failed_writes[:5]]
-            )
-            if len(failed_writes) > 5:
-                error_msg += f" ... and {len(failed_writes) - 5} more"
-            raise RuntimeError(error_msg)
+                # Clear batch tasks to free memory
+                del batch_tasks, batch_results
+
+        log.info("Agreement map written successfully")
 
         # Convert to COG locally
         log.info("Converting to Cloud Optimized GeoTIFF")
