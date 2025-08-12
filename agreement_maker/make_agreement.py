@@ -612,10 +612,12 @@ def write_agreement_map(
 
         # Configure COG profile
         cog_profile = LZWProfile().data.copy()
+        # Set blocksize via profile (cog_translate calculates tilesize from blockxsize/blockysize)
+        blocksize = int(os.getenv("COG_BLOCKSIZE", "512"))
         cog_profile.update(
             {
-                "BLOCKSIZE": int(os.getenv("COG_BLOCKSIZE", "512")),
-                "OVERVIEW_RESAMPLING": "nearest",
+                "blockxsize": blocksize,
+                "blockysize": blocksize,
             }
         )
 
