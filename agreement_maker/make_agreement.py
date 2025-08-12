@@ -19,6 +19,7 @@ import pandas as pd
 import rasterio
 import rioxarray as rxr
 import xarray as xr
+from agreement_maker.gval_optimizations import apply_gval_optimizations
 from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
@@ -343,6 +344,10 @@ def compute_agreement_map(
     # Use shared pairing dictionary from utils
     pairing_dictionary = AGREEMENT_PAIRING_DICT
 
+    # Store reference transform and CRS for final validation
+    reference_transform = candidate.rio.transform()
+    reference_crs = candidate.rio.crs
+
     # Apply exclusion masks
     all_masks_df = (
         create_exclusion_masks(candidate, mask_dict, log) if mask_dict else None
@@ -354,28 +359,6 @@ def compute_agreement_map(
         target_map="candidate",
         resampling=Resampling.nearest,  # Use nearest categorical flood extent data. Bilinear for depth. TODO make this configurable as part of improvements to handle depth rasters
     )
-
-    # Validate transforms after homogenization and restores if lost
-    if (
-        not hasattr(c_aligned.rio, "transform")
-        or c_aligned.rio.transform() is None
-    ):
-        log.warning(
-            "Candidate lost transform during homogenization, restoring..."
-        )
-        c_aligned = c_aligned.rio.write_transform(candidate.rio.transform())
-        c_aligned = c_aligned.rio.write_crs(candidate.rio.crs)
-
-    if (
-        not hasattr(b_aligned.rio, "transform")
-        or b_aligned.rio.transform() is None
-    ):
-        log.warning(
-            "Benchmark lost transform during homogenization, restoring..."
-        )
-        # Use candidate's transform since target_map="candidate"
-        b_aligned = b_aligned.rio.write_transform(candidate.rio.transform())
-        b_aligned = b_aligned.rio.write_crs(candidate.rio.crs)
 
     # Validate that homogenization produced valid results
     if c_aligned.size == 0 or b_aligned.size == 0:
@@ -415,19 +398,6 @@ def compute_agreement_map(
     # Set pairing dictionary as attribute for later use by gval functions
     agreement_map.attrs["pairing_dictionary"] = pairing_dictionary
 
-    # Validate agreement map has proper geotransform
-    if (
-        not hasattr(agreement_map.rio, "transform")
-        or agreement_map.rio.transform() is None
-    ):
-        log.info(
-            "Agreement map lost transform during computation, restoring from candidate..."
-        )
-        agreement_map = agreement_map.rio.write_transform(
-            c_aligned.rio.transform()
-        )
-        agreement_map = agreement_map.rio.write_crs(c_aligned.rio.crs)
-
     # Apply masking if exclusion masks are present
     if all_masks_df is not None:
         log.info("Applying exclusion masks to agreement map")
@@ -455,18 +425,7 @@ def compute_agreement_map(
             agreement_map,  # Keep original value
         )
 
-        # Restore transform if lost during xr.where operation
-        if (
-            not hasattr(agreement_map.rio, "transform")
-            or agreement_map.rio.transform() is None
-        ):
-            log.info("Restoring transform after masking operation")
-            agreement_map = agreement_map.rio.write_transform(
-                c_aligned.rio.transform()
-            )
-            agreement_map = agreement_map.rio.write_crs(c_aligned.rio.crs)
-
-    # Clean up aligned rasters (moved after masking to keep c_aligned crs and transform available)
+    # Clean up aligned rasters
     del c_aligned, b_aligned
     gc.collect()
 
@@ -480,7 +439,12 @@ def compute_agreement_map(
         )
         sys.exit(1)
 
-    log.info("Computing crosstab table for metrics")
+    # Apply gval optimizations for memory-efficient crosstab computation
+    apply_gval_optimizations()
+
+    log.info(
+        "Computing crosstab table for metrics using monkey patched compute_crosstab"
+    )
     crosstab_table = agreement_map.gval.compute_crosstab()
 
     # Only compute and write metrics if metrics_path is provided
@@ -520,6 +484,17 @@ def compute_agreement_map(
     # Clean up
     del crosstab_table
     gc.collect()
+
+    # Final transform validation - ensure agreement map has proper georeference information
+    if (
+        not hasattr(agreement_map.rio, "transform")
+        or agreement_map.rio.transform() is None
+        or not hasattr(agreement_map.rio, "crs")
+        or agreement_map.rio.crs is None
+    ):
+        log.info("Restoring georeference information to agreement map")
+        agreement_map = agreement_map.rio.write_transform(reference_transform)
+        agreement_map = agreement_map.rio.write_crs(reference_crs)
 
     return agreement_map
 
