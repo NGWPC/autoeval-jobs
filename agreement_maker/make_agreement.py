@@ -11,6 +11,7 @@ import tempfile
 import warnings
 from typing import Tuple
 
+import dask
 import fsspec
 import geopandas as gpd
 import gval
@@ -19,7 +20,7 @@ import pandas as pd
 import rasterio
 import rioxarray as rxr
 import xarray as xr
-from agreement_maker.gval_optimizations import apply_gval_optimizations
+from gval_optimizations import apply_gval_optimizations
 from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
@@ -230,10 +231,8 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
         processes=False,  # Use threads instead of processes to reduce memory overhead
         silence_logs=False,
     )
-    client = Client(cluster)
 
-    # Optimize Dask configuration for large graphs
-    client.configure(
+    dask.config.set(
         {
             "distributed.worker.memory.target": 0.7,  # GC more aggressively
             "distributed.worker.memory.spill": 0.75,
@@ -244,6 +243,8 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
             "distributed.client.heartbeat": "10s",
         }
     )
+
+    client = Client(cluster)
 
     log.info(f"Dask dashboard link: {client.dashboard_link}")
     return client, cluster
@@ -619,17 +620,13 @@ def write_agreement_map(
                                         (win.height, win.width)
                                     )
 
-                            with rasterio.open(temp_tiff_path, "r+") as d:
-                                # Verify destination has transform
-                                if d.transform is None:
-                                    d.transform = base_tf
-                                d.write(arr2d, 1, window=win)
-                            return (ii, jj, True, None)
+                            # Return the array and window for writing
+                            return (ii, jj, True, arr2d, win)
                         except Exception as e:
                             log.error(
                                 f"Block ({ii}, {jj}) write failed: {str(e)}"
                             )
-                            return (ii, jj, False, str(e))
+                            return (ii, jj, False, None, None)
 
                     batch_tasks.append(
                         write_window_batch(
@@ -643,10 +640,16 @@ def write_agreement_map(
                 )
                 batch_results = client.compute(batch_tasks, sync=True)
 
-                # Check for failures in this batch
-                failed_in_batch = [
-                    (r[0], r[1], r[3]) for r in batch_results if not r[2]
-                ]
+                # Write the results to the file and check for failures
+                failed_in_batch = []
+                for r in batch_results:
+                    ii, jj, success, arr2d, win = r
+                    if success and arr2d is not None and win is not None:
+                        # Write the array to the file
+                        dst.write(arr2d, 1, window=win)
+                    elif not success:
+                        failed_in_batch.append((ii, jj, "Processing failed"))
+                
                 if failed_in_batch:
                     raise RuntimeError(
                         f"Failed to write {len(failed_in_batch)} blocks in batch: {failed_in_batch}"
