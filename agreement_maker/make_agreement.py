@@ -572,56 +572,42 @@ def write_agreement_map(
                         y=slice(window.row_off, window.row_off + window.height),
                     ).compute()
 
+                    # Extract numpy array and metadata from the computed block
+                    # This avoids capturing the xarray object in the delayed function and reduces memory pressure during writing. Previously the entire agreement map was getting sent to every set of dask delayed tasks
+                    block_values = block.values
+                    block_has_transform = (
+                        hasattr(block.rio, "transform") 
+                        and block.rio.transform() is not None
+                    )
+                    
+                    # Extract the 2D array here to avoid doing it in the delayed function
+                    if block.ndim == 3 and block.shape[0] == 1:
+                        # 3D array with single band - extract the first band
+                        arr2d = block_values[0, :, :].astype("uint8")
+                    elif block.ndim == 2:
+                        # Already 2D - use as is
+                        arr2d = block_values.astype("uint8")
+                    else:
+                        # Fallback for unexpected dimensions
+                        arr2d = block_values.squeeze().astype("uint8")
+                        # Ensure we have a 2D array
+                        if arr2d.ndim != 2:
+                            # Force reshape to match window dimensions
+                            arr2d = arr2d.reshape((window.height, window.width))
+
                     @delayed
                     def write_window_batch(
-                        computed_block, win, ii, jj, base_tf, base_crs_val
+                        array_2d, win, ii, jj, has_transform, base_tf, base_crs_val
                     ):
                         try:
-                            # Validate block has transform
-                            if (
-                                not hasattr(computed_block.rio, "transform")
-                                or computed_block.rio.transform() is None
-                            ):
-                                # Calculate window-specific transform
-                                block_transform = transform(win, base_tf)
-                                computed_block = (
-                                    computed_block.rio.write_transform(
-                                        block_transform
-                                    )
-                                )
-                                computed_block = computed_block.rio.write_crs(
-                                    base_crs_val
-                                )
+                            # Log if transform was missing and needed to be restored
+                            if not has_transform:
                                 log.info(
-                                    f"Restored transform for block ({ii}, {jj})"
+                                    f"Block ({ii}, {jj}) had no transform, using base transform"
                                 )
-
-                            # Safely extract 2D array from block, handling various dimension scenarios
-                            if (
-                                computed_block.ndim == 3
-                                and computed_block.shape[0] == 1
-                            ):
-                                # 3D array with single band - extract the first band
-                                arr2d = computed_block.values[0, :, :].astype(
-                                    "uint8"
-                                )
-                            elif computed_block.ndim == 2:
-                                # Already 2D - use as is
-                                arr2d = computed_block.values.astype("uint8")
-                            else:
-                                # Fallback for unexpected dimensions
-                                arr2d = computed_block.values.squeeze().astype(
-                                    "uint8"
-                                )
-                                # Ensure we have a 2D array
-                                if arr2d.ndim != 2:
-                                    # Force reshape to match window dimensions
-                                    arr2d = arr2d.reshape(
-                                        (win.height, win.width)
-                                    )
 
                             # Return the array and window for writing
-                            return (ii, jj, True, arr2d, win)
+                            return (ii, jj, True, array_2d, win)
                         except Exception as e:
                             log.error(
                                 f"Block ({ii}, {jj}) write failed: {str(e)}"
@@ -630,7 +616,7 @@ def write_agreement_map(
 
                     batch_tasks.append(
                         write_window_batch(
-                            block, window, i, j, base_transform, base_crs
+                            arr2d, window, i, j, block_has_transform, base_transform, base_crs
                         )
                     )
 
