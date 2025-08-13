@@ -236,7 +236,7 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
         {
             "distributed.worker.memory.target": 0.7,  # GC more aggressively
             "distributed.worker.memory.spill": 0.75,
-            "distributed.worker.memory.pause": 0.8,
+            "distributed.worker.memory.pause": False,
             "distributed.worker.memory.terminate": 0.9,
             "distributed.comm.compression": "lz4",  # Faster compression
             "distributed.scheduler.allowed-failures": 5,
