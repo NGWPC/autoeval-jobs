@@ -20,7 +20,6 @@ import pandas as pd
 import rasterio
 import rioxarray as rxr
 import xarray as xr
-from gval_optimizations import apply_gval_optimizations
 from dask import delayed
 from dask.distributed import Client, LocalCluster
 from fsspec.core import url_to_fs
@@ -32,6 +31,7 @@ from rasterio.windows import transform
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import LZWProfile
 
+from gval_optimizations import apply_gval_optimizations
 from utils.logging import setup_logger
 from utils.pairing import AGREEMENT_PAIRING_DICT
 
@@ -236,11 +236,11 @@ def setup_dask_cluster(log: logging.Logger) -> Tuple[Client, LocalCluster]:
         {
             "distributed.worker.memory.target": 0.7,  # GC more aggressively
             "distributed.worker.memory.spill": 0.75,
-            "distributed.worker.memory.pause": False,
-            "distributed.worker.memory.terminate": 0.9,
+            "distributed.worker.memory.pause": 0.9,
+            "distributed.worker.memory.terminate": 0.78,
             "distributed.comm.compression": "lz4",  # Faster compression
             "distributed.scheduler.allowed-failures": 5,
-            "distributed.client.heartbeat": "10s",
+            "distributed.client.heartbeat": "20s",
         }
     )
 
@@ -534,7 +534,7 @@ def write_agreement_map(
         # Persist the agreement map to workers to avoid large graph serialization
         log.info("Persisting agreement map to workers")
         agreement_map = agreement_map.persist()
-        
+
         # use rasterio to write agreement map (better for large rasters)
         tasks = []
 
@@ -654,7 +654,7 @@ def write_agreement_map(
                         dst.write(arr2d, 1, window=win)
                     elif not success:
                         failed_in_batch.append((ii, jj, "Processing failed"))
-                
+
                 if failed_in_batch:
                     raise RuntimeError(
                         f"Failed to write {len(failed_in_batch)} blocks in batch: {failed_in_batch}"
