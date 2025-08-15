@@ -560,7 +560,8 @@ def write_agreement_map(
         # Write data block by block using batch processing to reduce graph size
         with rasterio.open(temp_tiff_path, "w", **output_profile) as dst:
             windows = list(dst.block_windows(1))
-            batch_size = min(16, len(windows))  # Process in smaller batches
+            # Reduce batch size to lower memory pressure
+            batch_size = min(8, len(windows))
 
             for batch_start in range(0, len(windows), batch_size):
                 batch_end = min(batch_start + batch_size, len(windows))
@@ -570,38 +571,20 @@ def write_agreement_map(
                     ij, window = windows[idx]
                     i, j = ij
 
-                    # Pre-compute block to avoid large graph serialization
-                    # With persist() called earlier, this should be fast
-                    block = agreement_map.isel(
+                    # Keep the block lazy - don't compute on the client
+                    # This avoids serializing large data in the task graph which was potentially causing unmanaged memory
+                    lazy_block = agreement_map.isel(
                         x=slice(window.col_off, window.col_off + window.width),
                         y=slice(window.row_off, window.row_off + window.height),
-                    ).compute()
+                    )
 
                     @delayed
-                    def write_window_batch(
-                        computed_block, win, ii, jj, base_tf, base_crs_val
-                    ):
+                    def write_window_batch(lazy_block_data, win, ii, jj):
                         try:
-                            # Validate block has transform
-                            if (
-                                not hasattr(computed_block.rio, "transform")
-                                or computed_block.rio.transform() is None
-                            ):
-                                # Calculate window-specific transform
-                                block_transform = transform(win, base_tf)
-                                computed_block = (
-                                    computed_block.rio.write_transform(
-                                        block_transform
-                                    )
-                                )
-                                computed_block = computed_block.rio.write_crs(
-                                    base_crs_val
-                                )
-                                log.info(
-                                    f"Restored transform for block ({ii}, {jj})"
-                                )
+                            # Compute the block on the worker where the persisted data lives
+                            computed_block = lazy_block_data.compute()
 
-                            # Safely extract 2D array from block, handling various dimension scenarios
+                            # Safely extract 2D array from xarray DataArray
                             if (
                                 computed_block.ndim == 3
                                 and computed_block.shape[0] == 1
@@ -620,10 +603,12 @@ def write_agreement_map(
                                 )
                                 # Ensure we have a 2D array
                                 if arr2d.ndim != 2:
-                                    # Force reshape to match window dimensions
                                     arr2d = arr2d.reshape(
                                         (win.height, win.width)
                                     )
+
+                            # Clean up computed block
+                            del computed_block
 
                             # Return the array and window for writing
                             return (ii, jj, True, arr2d, win)
@@ -634,9 +619,7 @@ def write_agreement_map(
                             return (ii, jj, False, None, None)
 
                     batch_tasks.append(
-                        write_window_batch(
-                            block, window, i, j, base_transform, base_crs
-                        )
+                        write_window_batch(lazy_block, window, i, j)
                     )
 
                 # Process batch and clear memory
@@ -660,8 +643,9 @@ def write_agreement_map(
                         f"Failed to write {len(failed_in_batch)} blocks in batch: {failed_in_batch}"
                     )
 
-                # Clear batch tasks to free memory
+                # Aggressively clean up after each batch
                 del batch_tasks, batch_results
+                gc.collect()
 
         log.info("Agreement map written successfully")
 
