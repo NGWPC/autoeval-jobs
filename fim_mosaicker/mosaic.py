@@ -21,7 +21,6 @@ from osgeo_utils.auxiliary import extent_util
 from osgeo_utils.auxiliary.extent_util import Extent, GeoTransform
 from osgeo_utils.auxiliary.rectangle import GeoRectangle
 from osgeo_utils.auxiliary.util import open_ds
-
 from utils.logging import setup_logger
 
 gdal.UseExceptions()
@@ -47,6 +46,12 @@ class RasterInfo:
     gt: GeoTransform
     proj: str
     dims: Tuple[int, int]
+
+
+@dataclass
+class AlignedSource:
+    ds: gdal.Dataset
+    original_path: str
 
 
 def load_rasters(paths: List[str], log: logging.Logger) -> List[RasterInfo]:
@@ -83,7 +88,9 @@ def load_rasters(paths: List[str], log: logging.Logger) -> List[RasterInfo]:
     return recs
 
 
-def pick_target_grid(srcs: List[RasterInfo], log: logging.Logger) -> Tuple[GeoTransform, Tuple[int, int], str]:
+def pick_target_grid(
+    srcs: List[RasterInfo], log: logging.Logger
+) -> Tuple[GeoTransform, Tuple[int, int], str]:
     """
     Finds the lowest resolution raster and picks that as the resolution to project to.
     Determines the bounds of the final mosaic. Also, uses the projection of the lowest
@@ -95,7 +102,9 @@ def pick_target_grid(srcs: List[RasterInfo], log: logging.Logger) -> Tuple[GeoTr
 
     gts = [r.gt for r in srcs]
     dims_list = [r.dims for r in srcs]
-    _, _, rect = extent_util.calc_geotransform_and_dimensions(gts, dims_list, input_extent=Extent.UNION)
+    _, _, rect = extent_util.calc_geotransform_and_dimensions(
+        gts, dims_list, input_extent=Extent.UNION
+    )
     if not isinstance(rect, GeoRectangle):
         raise RuntimeError("Invalid union extent")
 
@@ -113,7 +122,7 @@ def build_vrts(
     dims: Tuple[int, int],
     crs_wkt: str,
     log: logging.Logger,
-) -> Tuple[List[gdal.Dataset], str]:
+) -> Tuple[List[AlignedSource], str]:
     """
     Warps rasters to the projection, resolution, and alignment returned by the
     "pick_target_grid" function. The returned warped rasters are VRT's stored in
@@ -122,11 +131,15 @@ def build_vrts(
     have heterogenous projections, alignments, resolutions, etc.
     """
     tmpdir = tempfile.mkdtemp(prefix="vrt_")
-    aligned = []
+    aligned: List[AlignedSource] = []
     for r in srcs:
-        same = np.allclose(r.gt, gt, atol=1e-6) and r.dims == dims and r.proj == crs_wkt
+        same = (
+            np.allclose(r.gt, gt, atol=1e-6)
+            and r.dims == dims
+            and r.proj == crs_wkt
+        )
         if same:
-            aligned.append(r.ds)
+            aligned.append(AlignedSource(ds=r.ds, original_path=r.path))
         else:
             log.info(f"Warp into VRT: {r.path}")
             vrt_name = f"{Path(r.path).stem}_aligned.vrt"
@@ -150,7 +163,7 @@ def build_vrts(
                 ),
             )
             ds = gdal.Open(vrt_path, gdal.GA_ReadOnly)
-            aligned.append(ds)
+            aligned.append(AlignedSource(ds=ds, original_path=r.path))
     return aligned, tmpdir
 
 
@@ -159,14 +172,15 @@ def process_single_block(
     y: int,
     w: int,
     h: int,
-    aligned: List[gdal.Dataset],
+    aligned_sources: List[AlignedSource],
     dtype: int,
     nodata: float,
     read_lock: threading.Lock,
+    log: logging.Logger,
 ) -> np.ndarray:
     """
     Process a single block by reading from all aligned sources and computing the max.
-    Returns the output array for this block.
+    If a source fails to read, it is logged and skipped for this block.
     """
     # Allocate buffers for this block
     read_buf = np.empty((h, w), dtype=np.float64)
@@ -176,49 +190,57 @@ def process_single_block(
         write_buf = np.empty((h, w), dtype=np.uint8)
     else:
         write_buf = np.empty((h, w), dtype=np.float32)
-    
+
     # Initialize accumulator
     acc = acc_buf[:h, :w]
     acc.fill(np.nan)
     mask_any = mask_buf[:h, :w]
     mask_any.fill(False)
-    
+
     # Read & fmax each source (serialize GDAL reads, parallelize numpy ops)
-    for src_ds in aligned:
-        # Thread-safe GDAL read operation
-        with read_lock:
-            src_band = src_ds.GetRasterBand(1)
-            arr = gdal_array.BandReadAsArray(
-                src_band,
-                xoff=x,
-                yoff=y,
-                win_xsize=w,
-                win_ysize=h,
-                buf_obj=read_buf[:h, :w],
+    for src in aligned_sources:
+        try:
+            # Thread-safe GDAL read operation
+            with read_lock:
+                src_band = src.ds.GetRasterBand(1)
+                arr = gdal_array.BandReadAsArray(
+                    src_band,
+                    xoff=x,
+                    yoff=y,
+                    win_xsize=w,
+                    win_ysize=h,
+                    buf_obj=read_buf[:h, :w],
+                )
+                ndv = src_band.GetNoDataValue()
+
+            # Numpy operations can happen in parallel (outside the lock)
+            if ndv is not None and not np.isnan(ndv):
+                valid = arr != ndv
+            else:
+                valid = ~np.isnan(arr)
+            arr[~valid] = np.nan
+            # in‐place fmax
+            np.fmax(acc, arr, out=acc)
+            mask_any |= valid
+
+        except RuntimeError as e:
+            # This catches read failures (often caused by HTTP 400 errors from S3)
+            # and allows the script to continue with the other rasters.
+            log.warning(
+                f"Read failed for block ({x},{y}) in {src.original_path}. Skipping. Error: {e}"
             )
-            ndv = src_band.GetNoDataValue()
-        
-        # Numpy operations can happen in parallel (outside the lock)
-        if ndv is not None and not np.isnan(ndv):
-            valid = arr != ndv
-        else:
-            valid = ~np.isnan(arr)
-        arr[~valid] = np.nan
-        # in‐place fmax
-        np.fmax(acc, arr, out=acc)
-        mask_any |= valid
-    
-    # Prepare output tile
+            continue  # Move to the next source file
+
     out = write_buf[:h, :w]
     out.fill(nodata)
     ok = mask_any & ~np.isnan(acc)
     out[ok] = acc[ok].astype(out.dtype)
-    
+
     return out
 
 
 def mosaic_blocks(
-    aligned: List[gdal.Dataset],
+    aligned: List[AlignedSource],
     outpath: str,
     gt: GeoTransform,
     dims: Tuple[int, int],
@@ -234,7 +256,7 @@ def mosaic_blocks(
     the merging. Numpy is used to perform the max operation by casting the blocks to
     Numpy arrays to keep things performant. This approach supports mosaicing many, large
     rasters as long as the input rasters are tiled.
-    
+
     Args:
         parallel_blocks: Number of blocks to process in parallel (default: 1 for sequential)
     """
@@ -264,17 +286,19 @@ def mosaic_blocks(
     # block‐size
     bx, by = band.GetBlockSize()
     total_blocks = ((dims[0] + bx - 1) // bx) * ((dims[1] + by - 1) // by)
-    
+
     if parallel_blocks == 1:
         log.info(f"Processing {total_blocks} blocks sequentially")
     else:
-        log.info(f"Processing {total_blocks} blocks with {parallel_blocks} parallel workers")
-        
+        log.info(
+            f"Processing {total_blocks} blocks with {parallel_blocks} parallel workers"
+        )
+
     # Create locks for thread-safe GDAL operations
     write_lock = threading.Lock()
     read_lock = threading.Lock()
     completed_blocks = 0
-    
+
     # Create list of all block coordinates
     block_coords = []
     for y in range(0, dims[1], by):
@@ -282,21 +306,32 @@ def mosaic_blocks(
             h = min(by, dims[1] - y)
             w = min(bx, dims[0] - x)
             block_coords.append((x, y, w, h))
-    
+
     # Process blocks using ThreadPoolExecutor (works for both sequential and parallel)
     with ThreadPoolExecutor(max_workers=parallel_blocks) as executor:
         # Submit all tasks
         future_to_coords = {
-            executor.submit(process_single_block, x, y, w, h, aligned, dtype, nodata, read_lock): (x, y)
+            executor.submit(
+                process_single_block,
+                x,
+                y,
+                w,
+                h,
+                aligned,
+                dtype,
+                nodata,
+                read_lock,
+                log,
+            ): (x, y)
             for x, y, w, h in block_coords
         }
-        
+
         # Process completed tasks
         for future in as_completed(future_to_coords):
             x, y = future_to_coords[future]
             try:
                 out = future.result()
-                
+
                 # Thread-safe write to output dataset
                 with write_lock:
                     gdal_array.BandWriteArray(band, out, xoff=x, yoff=y)
@@ -314,7 +349,9 @@ def mosaic_blocks(
     log.info(f"Converting GTiff to COG: {outpath}")
     cog_drv = gdal.GetDriverByName("COG")
     src_ds = gdal.Open(temp_gtiff, gdal.GA_ReadOnly)
-    cog_ds = cog_drv.CreateCopy(outpath, src_ds, strict=0, options=["COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
+    cog_ds = cog_drv.CreateCopy(
+        outpath, src_ds, strict=0, options=["COMPRESS=LZW", "BIGTIFF=IF_SAFER"]
+    )
     src_ds = None
 
     # Clean up temp file
@@ -333,7 +370,9 @@ def clip_output(src: str, clip_path: str, nodata, log: logging.Logger):
 
     with fsspec.open(clip_path, "rb") as f:
         # Create temporary file for GDAL to use
-        temp_clip = tempfile.NamedTemporaryFile(suffix=Path(clip_path).suffix, delete=False).name
+        temp_clip = tempfile.NamedTemporaryFile(
+            suffix=Path(clip_path).suffix, delete=False
+        ).name
         with open(temp_clip, "wb") as local_file:
             shutil.copyfileobj(f, local_file)
 
@@ -412,14 +451,29 @@ def main():
         help=f"Number of blocks to process in parallel (default: {max(1, cpu_count() // 4)} = CPU count/4, min 1). Set to 1 for sequential processing.",
     )
     args = p.parse_args()
+
     try:
         # load raster paths
         input_rp = args.raster_paths
         if len(input_rp) == 1 and os.path.isdir(input_rp[0]):
-            raster_extensions = {".tif", ".tiff", ".vrt", ".img", ".hdf", ".nc", ".netcdf"}
+            raster_extensions = {
+                ".tif",
+                ".tiff",
+                ".vrt",
+                ".img",
+                ".hdf",
+                ".nc",
+                ".netcdf",
+            }
             all_files = list(Path(input_rp[0]).iterdir())
-            paths = [str(p) for p in all_files if p.is_file() and p.suffix.lower() in raster_extensions]
-            log.info(f"Found {len(paths)} raster files (out of {len(all_files)} total) in directory {input_rp}")
+            paths = [
+                str(p)
+                for p in all_files
+                if p.is_file() and p.suffix.lower() in raster_extensions
+            ]
+            log.info(
+                f"Found {len(paths)} raster files (out of {len(all_files)} total) in directory {input_rp}"
+            )
         else:
             # either multiple shell-split tokens or one quoted string
             joined = " ".join(input_rp)
@@ -429,19 +483,33 @@ def main():
 
         rasters = load_rasters([str(p) for p in paths], log)
         gt, dims, crs = pick_target_grid(rasters, log)
-
-        aligned_ds, tmpdir = build_vrts(rasters, gt, dims, crs, log)
+        aligned_sources, tmpdir = build_vrts(rasters, gt, dims, crs, log)
 
         # choose output type
         if args.fim_type == "extent":
-            dtype, nodata = gdal.GDT_Byte, int(os.getenv("EXTENT_NODATA_VALUE", "255"))
+            dtype, nodata = (
+                gdal.GDT_Byte,
+                int(os.getenv("EXTENT_NODATA_VALUE", "255")),
+            )
         else:
-            dtype, nodata = gdal.GDT_Float32, float(os.getenv("DEPTH_NODATA_VALUE", "-9999"))
+            dtype, nodata = (
+                gdal.GDT_Float32,
+                float(os.getenv("DEPTH_NODATA_VALUE", "-9999")),
+            )
 
         tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
 
-        # do the merge
-        out_ds = mosaic_blocks(aligned_ds, tmp_out, gt, dims, crs, dtype, nodata, log, args.parallel_blocks)
+        out_ds = mosaic_blocks(
+            aligned_sources,
+            tmp_out,
+            gt,
+            dims,
+            crs,
+            dtype,
+            nodata,
+            log,
+            args.parallel_blocks,
+        )
         out_ds.FlushCache()
         out_ds = None
         gc.collect()
@@ -452,14 +520,17 @@ def main():
 
         # push via fsspec
         log.info(f"Pushing temp COG → {args.mosaic_output_path}")
-        with open(tmp_out, "rb") as ifp, fsspec.open(args.mosaic_output_path, "wb") as ofp:
+        with (
+            open(tmp_out, "rb") as ifp,
+            fsspec.open(args.mosaic_output_path, "wb") as ofp,
+        ):
             shutil.copyfileobj(ifp, ofp)
         os.remove(tmp_out)
 
         # close all warped VRTs (so GDAL cache can free memory)
-        for i in range(len(aligned_ds)):
-            aligned_ds[i] = None
-        aligned_ds.clear()
+        for i in range(len(aligned_sources)):
+            aligned_sources[i].ds = None
+        aligned_sources.clear()
         shutil.rmtree(tmpdir, ignore_errors=True)
 
         # also close original rasters
