@@ -158,7 +158,7 @@ def build_vrts(
                     width=dims[0],
                     height=dims[1],
                     dstSRS=crs_wkt,
-                    resampleAlg=gdal.GRIORA_Bilinear,
+                    resampleAlg=gdal.GRIORA_NearestNeighbour,
                     multithread=True,
                 ),
             )
