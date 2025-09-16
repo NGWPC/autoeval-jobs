@@ -1,2 +1,2 @@
-git total_points,num_hits,num_misses,mean_dist_to_hit_ft,median_dist_to_hit_ft
+total_points,num_hits,num_misses,mean_dist_to_hit_ft,median_dist_to_hit_ft
 22,8,14,182.71,96.24
