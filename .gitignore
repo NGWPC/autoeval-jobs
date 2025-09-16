@@ -7,3 +7,4 @@ __pycache__/
 *.pyc
 fim_mosaicker/mosaic.tif
 fim_mosaicker/raster_paths.json
+*.swp
